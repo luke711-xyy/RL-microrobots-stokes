@@ -11,6 +11,7 @@ import os
 import numpy as np
 import math
 from os import path
+from datetime import datetime
 # class MyEnv(gym.Env):
 #     def __init__(self, env_config):
 #         self.action_space = <gym.Space>
@@ -19,8 +20,10 @@ from os import path
 #         return <obs>
 #     def step(self, action):
 #         return <obs>, <reward: float>, <done: bool>, <info: dict>
-cwd = os.path.join(os.getcwd(),"policy")
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+cwd = os.path.join(os.getcwd(), f"policy_{timestamp}")
 cwd2 = os.path.join(os.getcwd(),"policy/checkpoint_000000/checkpoint-0")
+print(f"Policy save dir: {cwd}")
 print(os.getcwd())
 ray.init(ignore_reinit_error=True, num_cpus=5)
 # trainer = ppo.PPOTrainer(env=swimmer_gym, config={

@@ -155,6 +155,14 @@ class swimmer_gym(gym.Env):
         self.order=0
         self.escape_count=0
         self.centroid_history = deque(maxlen=91)
+        self.episode_count = 0
+        self.ep_step = 0
+        self.last_pressure_reward = 0.0
+        self.last_direction_penalty = 0.0
+        self.last_angle_diff = 0.0
+        self.last_pressure_scale = 0.0
+        self.last_old_dir_angle = 0.0
+        self.last_recent_dir_angle = 0.0
         
 
     
@@ -256,9 +264,13 @@ class swimmer_gym(gym.Env):
 #             reward+=-N
 #         else:
 #         reward+=(((r)/N)*100)      
-        reward+=  pressure_diff.item()*12
+        self.last_pressure_reward = pressure_diff.item()*12
+        reward += self.last_pressure_reward
 
         self.centroid_history.append(np.array([self.state_n[0], self.state_n[1]]))
+        self.last_direction_penalty = 0.0
+        self.last_angle_diff = 0.0
+        self.last_pressure_scale = 0.0
         if len(self.centroid_history) >= 91:
             pos_current = self.centroid_history[-1]
             pos_30ago = self.centroid_history[-31]
@@ -267,11 +279,20 @@ class swimmer_gym(gym.Env):
             old_vec = pos_30ago - pos_90ago
             recent_norm = np.linalg.norm(recent_vec)
             old_norm = np.linalg.norm(old_vec)
+            self.last_old_dir_angle = math.degrees(math.atan2(old_vec[1], old_vec[0]))
+            self.last_recent_dir_angle = math.degrees(math.atan2(recent_vec[1], recent_vec[0]))
             if recent_norm > 1e-8 and old_norm > 1e-8:
                 cos_angle = np.clip(np.dot(recent_vec, old_vec) / (recent_norm * old_norm), -1.0, 1.0)
-                angle_diff = math.acos(cos_angle)
-                pressure_scale = min(abs(pressure_diff.item()), 80.0) / 80.0
-                reward += -2.0 * (angle_diff / math.pi) * pressure_scale
+                self.last_angle_diff = math.acos(cos_angle)
+                self.last_pressure_scale = min(abs(pressure_diff.item()), 80.0) / 80.0
+                self.last_direction_penalty = -2.0 * (self.last_angle_diff / math.pi) * self.last_pressure_scale
+                reward += self.last_direction_penalty
+
+        self.ep_step += 1
+        if self.ep_step % 200 == 0:
+            print(f"  [Step {self.ep_step:>4d}] Centroid: ({self.state_n[0]:.4f}, {self.state_n[1]:.4f}) | "
+                  f"Dir_60: {self.last_old_dir_angle:>7.1f} -> Dir_30: {self.last_recent_dir_angle:>7.1f} | "
+                  f"P_rwd: {self.last_pressure_reward:>8.4f}, Dir_scale: {self.last_pressure_scale:.3f}, Dir_pen: {self.last_direction_penalty:>8.4f}")
 
         self.Xfirst+=x_first_delta
             
@@ -391,12 +412,12 @@ class swimmer_gym(gym.Env):
 
 
     def reset(self):
-        
+        if self.ep_step > 0:
+            self.episode_count += 1
+            print(f"[Episode {self.episode_count:>4d}/~2000] ep_reward: {self.reward:.4f}")
 
-
-        
         self.reward=0
-        
+        self.ep_step=0
 
         self.order=0
 
