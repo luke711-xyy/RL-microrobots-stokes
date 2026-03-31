@@ -10,6 +10,7 @@ from math import sin
 from math import cos
 import random
 import torch
+from collections import deque
 #import numba
 #from numba import jit, njit
 from calculate_v import RK
@@ -153,6 +154,7 @@ class swimmer_gym(gym.Env):
         self.pressure_index=1
         self.order=0
         self.escape_count=0
+        self.centroid_history = deque(maxlen=91)
         
 
     
@@ -254,8 +256,23 @@ class swimmer_gym(gym.Env):
 #             reward+=-N
 #         else:
 #         reward+=(((r)/N)*100)      
-        reward+=  pressure_diff.item()*10      
-        
+        reward+=  pressure_diff.item()*12
+
+        self.centroid_history.append(np.array([self.state_n[0], self.state_n[1]]))
+        if len(self.centroid_history) >= 91:
+            pos_current = self.centroid_history[-1]
+            pos_30ago = self.centroid_history[-31]
+            pos_90ago = self.centroid_history[0]
+            recent_vec = pos_current - pos_30ago
+            old_vec = pos_30ago - pos_90ago
+            recent_norm = np.linalg.norm(recent_vec)
+            old_norm = np.linalg.norm(old_vec)
+            if recent_norm > 1e-8 and old_norm > 1e-8:
+                cos_angle = np.clip(np.dot(recent_vec, old_vec) / (recent_norm * old_norm), -1.0, 1.0)
+                angle_diff = math.acos(cos_angle)
+                pressure_scale = min(abs(pressure_diff.item()), 80.0) / 80.0
+                reward += -2.0 * (angle_diff / math.pi) * pressure_scale
+
         self.Xfirst+=x_first_delta
             
 
