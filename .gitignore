@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# RL checkpoint / policy 模型文件
+policy/
+policy2/
+policy_reorien/
+policy_translate/
+checkpoint_*/
+*.pkl
+.tune_metadata
+.is_checkpoint
+
+# 训练轨迹数据
+traj/
+traj2/
+trajp/
+
+# 离散化预处理生成的数据文件
+*.pt
+
+# 其他数据
+alldata.txt
+initial_state.pt
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
