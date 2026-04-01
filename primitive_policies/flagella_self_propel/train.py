@@ -1,3 +1,14 @@
+import os
+import argparse
+from datetime import datetime
+
+# Parse args BEFORE importing swimmer/calculate_v, so env var is set in time
+parser = argparse.ArgumentParser(description="Train flagella self-propel swimmer")
+parser.add_argument("--num_cpus", type=int, default=5, help="Number of CPUs for Ray (default: 5)")
+parser.add_argument("--num_threads", type=int, default=5, help="Number of PyTorch threads (default: 5)")
+args = parser.parse_args()
+os.environ["STOKES_NUM_THREADS"] = str(args.num_threads)
+
 import gym, ray
 #from gym_particle.envs.swimmer import swimmer_gym
 from swimmer import swimmer_gym
@@ -7,25 +18,17 @@ import ray.rllib.algorithms.ppo as ppo
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.tune.logger import pretty_print
 from ray.rllib.utils.typing import ModelConfigDict, TensorType
-import os
 import numpy as np
 import math
 from os import path
-from datetime import datetime
-# class MyEnv(gym.Env):
-#     def __init__(self, env_config):
-#         self.action_space = <gym.Space>
-#         self.observation_space = <gym.Space>
-#     def reset(self):
-#         return <obs>
-#     def step(self, action):
-#         return <obs>, <reward: float>, <done: bool>, <info: dict>
+
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 cwd = os.path.join(os.getcwd(), f"policy_{timestamp}")
 cwd2 = os.path.join(os.getcwd(),"policy/checkpoint_000000/checkpoint-0")
 print(f"Policy save dir: {cwd}")
+print(f"Ray CPUs: {args.num_cpus}, PyTorch threads: {args.num_threads}")
 print(os.getcwd())
-ray.init(ignore_reinit_error=True, num_cpus=5)
+ray.init(ignore_reinit_error=True, num_cpus=args.num_cpus)
 # trainer = ppo.PPOTrainer(env=swimmer_gym, config={
 #     "env_config": {},  # config to pass to env class
 # })
