@@ -240,6 +240,20 @@ def build_flow_grid(center_x, center_y, spacing, view_range):
     return grid_x, grid_y, points
 
 
+def unpack_action_output(action_output, prev_state):
+    if not isinstance(action_output, tuple):
+        return action_output, prev_state
+
+    if len(action_output) == 0:
+        raise ValueError("compute_single_action returned an empty tuple")
+
+    action = action_output[0]
+    next_state = prev_state
+    if len(action_output) >= 2 and isinstance(action_output[1], (list, tuple)):
+        next_state = action_output[1]
+    return action, next_state
+
+
 def main():
     checkpoint = resolve_checkpoint(ARGS.checkpoint) if ARGS.checkpoint else find_latest_checkpoint()
     if checkpoint is None:
@@ -302,7 +316,8 @@ def main():
 
     try:
         for step_idx in range(1, ARGS.steps + 1):
-            action, state, _ = agent.compute_single_action(observation=obs, state=state, explore=False)
+            action_output = agent.compute_single_action(observation=obs, state=state, explore=False)
+            action, state = unpack_action_output(action_output, state)
             obs, reward, done, _ = env.step(action)
 
             diagnostics = compute_solver_diagnostics(env.state.copy(), action.copy(), env.Xfirst.copy())

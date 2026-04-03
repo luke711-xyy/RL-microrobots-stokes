@@ -132,3 +132,23 @@ Recommended entry format for future rounds:
   - none in code logic; full runtime restore still depends on the target machine having the same Ray / RLlib environment available
 - Next step:
   - run the visualizer on the older machine by passing either the `10` directory or the nested `checkpoint_000011` directory directly
+
+---
+
+## Entry 006
+
+- Time: 2026-04-03
+- Goal: fix the visualizer crash caused by RLlib version differences in `compute_single_action`
+- Key findings:
+  - on the target machine, `agent.compute_single_action(...)` returns more than the 3 values assumed by the visualizer
+  - the failure is not in checkpoint restore; it occurs at action inference because the script unpacked the return value too strictly
+- Files touched:
+  - `primitive_policies/flagella_self_propel/visualize_self_propel.py`
+  - `primitive_policies/flagella_self_propel/WORKLOG.md`
+- Actual changes:
+  - added a small compatibility helper that accepts non-tuple, 2-item, 3-item, and longer tuple return formats
+  - changed the visualization loop to use the compatibility helper instead of unpacking `compute_single_action` directly
+- Open questions:
+  - none for this specific crash; if the target machine later fails deeper in RLlib restore, that would be a separate environment-compatibility issue
+- Next step:
+  - rerun the visualizer on the target machine and check whether action inference now proceeds into the rendering loop
