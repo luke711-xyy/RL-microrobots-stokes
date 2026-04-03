@@ -110,3 +110,25 @@ Recommended entry format for future rounds:
   - the fluid field currently visualizes the solved swimmer-induced flow in the 2D motion plane; if you later want streamlines or pressure overlays, that should be added as a separate rendering mode
 - Next step:
   - run the visualizer against a real checkpoint and tune the lattice spacing / arrow scaling for the policy you care about most
+
+---
+
+## Entry 005
+
+- Time: 2026-04-03
+- Goal: make the visualizer compatible with RLlib directory-style checkpoints from older training outputs
+- Key findings:
+  - older outputs can store the checkpoint as a directory like `10/checkpoint_000011/` with `rllib_checkpoint.json`, not necessarily as a visible `checkpoint-11` file
+  - the visualizer's original checkpoint resolver only searched for `checkpoint-*` file names, so it would reject the directory structure shown in the screenshot
+- Files touched:
+  - `primitive_policies/flagella_self_propel/visualize_self_propel.py`
+  - `primitive_policies/flagella_self_propel/CODE_INDEX.md`
+  - `primitive_policies/flagella_self_propel/WORKLOG.md`
+- Actual changes:
+  - added directory-style checkpoint detection based on `checkpoint_*`, `rllib_checkpoint.json`, and `.is_checkpoint`
+  - updated latest-checkpoint discovery to return the newest matching checkpoint path regardless of whether it is a file or directory
+  - documented that `visualize_self_propel.py` accepts both checkpoint layout variants
+- Open questions:
+  - none in code logic; full runtime restore still depends on the target machine having the same Ray / RLlib environment available
+- Next step:
+  - run the visualizer on the older machine by passing either the `10` directory or the nested `checkpoint_000011` directory directly

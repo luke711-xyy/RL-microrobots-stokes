@@ -51,15 +51,44 @@ def resolve_checkpoint(path_str):
     if not path.exists():
         raise FileNotFoundError(f"Checkpoint path does not exist: {path}")
 
-    direct_files = sorted(path.glob("checkpoint-*"))
-    if direct_files:
-        return direct_files[0]
+    if is_checkpoint_path(path):
+        return path
 
-    nested_files = sorted(path.rglob("checkpoint-*"))
-    if nested_files:
-        return nested_files[0]
+    direct_candidates = sorted(
+        [candidate for candidate in path.iterdir() if is_checkpoint_path(candidate)],
+        key=checkpoint_sort_key,
+    )
+    if direct_candidates:
+        return direct_candidates[-1]
 
-    raise FileNotFoundError(f"No checkpoint file found under: {path}")
+    nested_candidates = sorted(
+        [candidate for candidate in path.rglob("*") if is_checkpoint_path(candidate)],
+        key=checkpoint_sort_key,
+    )
+    if nested_candidates:
+        return nested_candidates[-1]
+
+    raise FileNotFoundError(f"No checkpoint path found under: {path}")
+
+
+def is_checkpoint_path(path):
+    path = Path(path)
+    if not path.exists():
+        return False
+    if path.is_file():
+        return path.name.startswith("checkpoint-")
+    return (
+        path.name.startswith("checkpoint_")
+        or (path / "rllib_checkpoint.json").exists()
+        or (path / ".is_checkpoint").exists()
+    )
+
+
+def checkpoint_sort_key(path):
+    path = Path(path)
+    digits = "".join(ch for ch in path.name if ch.isdigit())
+    order = int(digits) if digits else -1
+    return (order, str(path))
 
 
 def find_latest_checkpoint(base_dir=None):
@@ -74,11 +103,14 @@ def find_latest_checkpoint(base_dir=None):
         return None
 
     latest_iter_dir = max(iter_dirs, key=lambda p: int(p.name))
-    checkpoint_files = sorted(latest_iter_dir.rglob("checkpoint-*"))
-    if not checkpoint_files:
+    checkpoint_paths = sorted(
+        [candidate for candidate in latest_iter_dir.rglob("*") if is_checkpoint_path(candidate)],
+        key=checkpoint_sort_key,
+    )
+    if not checkpoint_paths:
         return None
 
-    return checkpoint_files[0]
+    return checkpoint_paths[-1]
 
 
 def build_config():

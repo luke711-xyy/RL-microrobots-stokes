@@ -218,6 +218,7 @@ Important details:
 - parses `--num_cpus` and `--num_threads` before importing the environment so visualization matches the same thread-control pattern as training
 - calls `os.chdir(BASE_DIR)` before importing `swimmer.py` / `calculate_v.py`, because the solver loads `.pt` preprocessing files from the working directory
 - auto-detects the latest `policy_*` checkpoint if `--checkpoint` is not provided
+- accepts both older file-style checkpoint paths and newer RLlib directory-style checkpoints such as `.../10/checkpoint_000011`
 - reconstructs the instantaneous force solution locally for visualization, without changing training-time reward logic
 - uses a fixed-spacing point lattice and masks arrows too close to the swimmer body for readability
 
