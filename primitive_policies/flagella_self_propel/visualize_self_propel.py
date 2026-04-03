@@ -11,16 +11,12 @@ BASE_DIR = Path(__file__).resolve().parent
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Visualize a trained flagella self-propel policy")
-    parser.add_argument("--checkpoint", type=str, default=None, help="Checkpoint file or containing directory. Defaults to latest local policy.")
+    parser.add_argument("--checkpoint", type=str, default=None, help="Checkpoint file or containing directory. Defaults to the latest local policy.")
     parser.add_argument("--steps", type=int, default=2000, help="Visualization steps to simulate.")
     parser.add_argument("--speed", type=float, default=0.03, help="Pause duration between frames in seconds.")
     parser.add_argument("--num_cpus", type=int, default=1, help="Number of CPUs for Ray during visualization.")
     parser.add_argument("--num_threads", type=int, default=5, help="Number of PyTorch threads for the Stokes solver.")
     parser.add_argument("--view_range", type=float, default=4.5, help="Half-width of the plotting window around the swimmer centroid.")
-    parser.add_argument("--grid_spacing", type=float, default=0.6, help="Spacing of the fluid-visualization lattice.")
-    parser.add_argument("--body_mask_radius", type=float, default=0.18, help="Hide fluid arrows too close to the swimmer body.")
-    parser.add_argument("--flow_gain", type=float, default=0.18, help="Display gain applied to fluid velocity vectors before plotting.")
-    parser.add_argument("--flow_clip", type=float, default=0.35, help="Maximum displayed arrow length after scaling.")
     parser.add_argument("--trace_len", type=int, default=300, help="Maximum stored centroid points in the path trace.")
     return parser.parse_args()
 
@@ -38,9 +34,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import ray
 import ray.rllib.algorithms.ppo as ppo
-import torch
 
-import calculate_v as cv
 from swimmer import swimmer_gym
 
 
@@ -147,99 +141,6 @@ def build_config():
     return config
 
 
-def compute_solver_diagnostics(state, action, x_first):
-    L, e, Y, theta, action_absolute, Qu, Q1, Ql, Q2, _, beta_ini, absU, Xini, Yini = cv.initial(state, action, x_first)
-    Y_dense = cv.initial_dense(state, action, x_first)
-
-    cv.Xf_all_fila = Y[:, 0].clone().view(-1, 1, 1)
-    cv.Zf_all_fila = Y[:, 1].clone().view(-1, 1, 1)
-
-    for m in range(cv.Xf_match_q_fila.shape[1]):
-        count = int(cv.Min_Distance_num_fila[m].item())
-        selected_x = cv.Label_Matrix_fila[:, m] * Y_dense[:, 0]
-        selected_z = cv.Label_Matrix_fila[:, m] * Y_dense[:, 1]
-        selected_idx = np.nonzero(cv.Label_Matrix_fila[:, m])
-        cv.Xf_match_q_fila[:, m, 0:count] = selected_x[selected_idx].view(1, -1)
-        cv.Zf_match_q_fila[:, m, 0:count] = selected_z[selected_idx].view(1, -1)
-
-    B = cv.MatrixB(L, theta, Y)
-    A, Ap = cv.M1M2(e)
-    B_supply = torch.zeros((3, A.shape[0] - B.shape[1]), dtype=torch.double, device=cv.device)
-    B_all = torch.cat((B, B_supply), dim=1)
-
-    Q = cv.MatrixQ(L, theta, Qu, Q1, Ql, Q2)
-    C1, C2 = cv.MatrixC(action_absolute)
-    AB = torch.linalg.solve(A.T, B_all.T).T.double()
-    AB = AB[:, : B.shape[1]]
-    MT = torch.matmul(AB, Q)
-    M = torch.matmul(MT, C1)
-    R = -torch.matmul(MT, C2)
-    velo = torch.matmul(torch.linalg.inv(M), R)
-    velo_points = torch.matmul(C1, velo) + C2
-    velo_points_all = torch.matmul(Q, velo_points)
-
-    velo_points_fila = torch.zeros((cv.Fila_point_num * 3, 1), dtype=torch.double, device=cv.device)
-    velo_points_fila[: cv.Fila_point_num * 2, :] = velo_points_all
-    force_points_fila = torch.linalg.solve(A, velo_points_fila)
-    pressure_all = torch.matmul(Ap, force_points_fila.reshape(-1, 1))
-
-    body_points = Y.detach().cpu().numpy()
-    body_forces = force_points_fila.reshape(-1, 3).detach().cpu().numpy()
-    pressure_np = pressure_all.view(-1).detach().cpu().numpy()
-    return {
-        "epsilon": float(e),
-        "body_points": body_points,
-        "body_forces": body_forces,
-        "pressure_all": pressure_np,
-    }
-
-
-def compute_flow_vectors(query_points, source_points, source_forces, epsilon):
-    dx = query_points[:, None, 0] - source_points[None, :, 0]
-    dz = query_points[:, None, 1] - source_points[None, :, 1]
-    r = np.sqrt(dx * dx + dz * dz + epsilon * epsilon)
-    inv_r = 1.0 / r
-    inv_r3 = inv_r**3
-
-    s_xx = inv_r + epsilon * epsilon * inv_r3 + dx * dx * inv_r3
-    s_xz = dx * dz * inv_r3
-    s_zz = inv_r + epsilon * epsilon * inv_r3 + dz * dz * inv_r3
-
-    fx = source_forces[None, :, 0]
-    fz = source_forces[None, :, 1]
-
-    u = np.sum(s_xx * fx + s_xz * fz, axis=1) / (8.0 * math.pi * cv.mu)
-    v = np.sum(s_xz * fx + s_zz * fz, axis=1) / (8.0 * math.pi * cv.mu)
-    return np.column_stack((u, v))
-
-
-def point_to_polyline_distance(points, polyline):
-    if len(polyline) < 2:
-        return np.linalg.norm(points - polyline[0], axis=1)
-
-    min_dist = np.full(points.shape[0], np.inf, dtype=np.float64)
-    for start, end in zip(polyline[:-1], polyline[1:]):
-        segment = end - start
-        denom = float(np.dot(segment, segment))
-        if denom < 1e-12:
-            dist = np.linalg.norm(points - start, axis=1)
-        else:
-            rel = points - start
-            t = np.clip(np.dot(rel, segment) / denom, 0.0, 1.0)
-            proj = start + t[:, None] * segment
-            dist = np.linalg.norm(points - proj, axis=1)
-        min_dist = np.minimum(min_dist, dist)
-    return min_dist
-
-
-def build_flow_grid(center_x, center_y, spacing, view_range):
-    xs = np.arange(center_x - view_range, center_x + view_range + 0.5 * spacing, spacing)
-    ys = np.arange(center_y - view_range, center_y + view_range + 0.5 * spacing, spacing)
-    grid_x, grid_y = np.meshgrid(xs, ys)
-    points = np.column_stack((grid_x.ravel(), grid_y.ravel()))
-    return grid_x, grid_y, points
-
-
 def unpack_action_output(action_output, prev_state):
     if not isinstance(action_output, tuple):
         return action_output, prev_state
@@ -252,6 +153,19 @@ def unpack_action_output(action_output, prev_state):
     if len(action_output) >= 2 and isinstance(action_output[1], (list, tuple)):
         next_state = action_output[1]
     return action, next_state
+
+
+def compute_average_heading(state):
+    if len(state) <= 3:
+        return float(state[2])
+
+    heading = float(state[2])
+    running_angle = heading
+    angle_sum = heading
+    for beta in state[3:]:
+        running_angle += float(beta)
+        angle_sum += running_angle
+    return angle_sum / (len(state) - 2)
 
 
 def main():
@@ -284,35 +198,35 @@ def main():
     centroid_trace = deque(maxlen=ARGS.trace_len)
 
     plt.ion()
-    fig, ax = plt.subplots(figsize=(11, 9))
+    fig, ax = plt.subplots(figsize=(10, 8))
     ax.set_aspect("equal")
-    ax.grid(True, linestyle="--", alpha=0.35)
+    ax.grid(True, linestyle="--", alpha=0.5)
     ax.set_title("Flagella Self-Propel Policy Visualization")
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
+    ax.set_xlabel("X Position")
+    ax.set_ylabel("Y Position")
 
-    body_line, = ax.plot([], [], "-", lw=3.0, color="royalblue", marker="o", markersize=4, label="Swimmer")
-    trace_line, = ax.plot([], [], "-", lw=1.2, color="black", alpha=0.55, label="Centroid trace")
+    body_line, = ax.plot([], [], "-", lw=3, markersize=5, color="royalblue", label="Robot Body")
+    trace_line, = ax.plot([], [], "-", lw=1.5, color="black", alpha=0.55, label="Centroid Trace")
+    heading_line, = ax.plot([], [], "--", color="green", lw=2.0, label="Average Heading")
+    head_line, = ax.plot([], [], "-", color="red", lw=2.0, label="First Link Heading")
     centroid_marker, = ax.plot([], [], "o", color="crimson", markersize=6, label="Centroid")
-    grid_points_artist = None
-    quiver = None
     info_text = ax.text(
         0.02,
-        0.97,
+        0.95,
         "",
         transform=ax.transAxes,
+        fontsize=11,
         va="top",
-        fontsize=10,
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.9),
     )
-    ax.legend(loc="lower right")
+    plt.legend(loc="lower right")
 
-    print("-" * 118)
+    print("-" * 128)
     print(
         f"{'Step':<6} | {'Reward':<10} | {'P_rwd':<10} | {'Dir_pen':<10} | "
-        f"{'Disp30':<10} | {'Gate30':<10} | {'Scale':<8} | {'PressureDiffSum':<16}"
+        f"{'Disp30':<10} | {'Gate30':<10} | {'Scale':<8} | {'HeadDeg':<10} | {'AvgDeg':<10}"
     )
-    print("-" * 118)
+    print("-" * 128)
 
     try:
         for step_idx in range(1, ARGS.steps + 1):
@@ -320,58 +234,31 @@ def main():
             action, state = unpack_action_output(action_output, state)
             obs, reward, done, _ = env.step(action)
 
-            diagnostics = compute_solver_diagnostics(env.state.copy(), action.copy(), env.Xfirst.copy())
             body_points = env.XY_positions.copy()
             centroid_x = float(env.state[0])
             centroid_y = float(env.state[1])
             centroid_trace.append((centroid_x, centroid_y))
 
-            grid_x, grid_y, query_points = build_flow_grid(centroid_x, centroid_y, ARGS.grid_spacing, ARGS.view_range)
-            flow = compute_flow_vectors(
-                query_points=query_points,
-                source_points=diagnostics["body_points"],
-                source_forces=diagnostics["body_forces"][:, :2],
-                epsilon=diagnostics["epsilon"],
-            )
-
-            mask_dist = point_to_polyline_distance(query_points, body_points) < ARGS.body_mask_radius
-            flow_display = flow * ARGS.flow_gain
-            flow_mag = np.linalg.norm(flow_display, axis=1)
-            clip_scale = np.minimum(1.0, ARGS.flow_clip / np.maximum(flow_mag, 1e-12))
-            flow_display = flow_display * clip_scale[:, None]
-            flow_display[mask_dist] = 0.0
+            first_link_heading = float(env.state[2])
+            average_heading = compute_average_heading(env.state)
+            first_link_deg = math.degrees(first_link_heading)
+            average_deg = math.degrees(average_heading)
 
             body_line.set_data(body_points[:, 0], body_points[:, 1])
             centroid_marker.set_data([centroid_x], [centroid_y])
+
             if centroid_trace:
                 trace_arr = np.array(centroid_trace)
                 trace_line.set_data(trace_arr[:, 0], trace_arr[:, 1])
 
-            if grid_points_artist is not None:
-                grid_points_artist.remove()
-            grid_points_artist = ax.scatter(
-                query_points[:, 0],
-                query_points[:, 1],
-                s=5,
-                color="lightgray",
-                alpha=0.6,
-                zorder=1,
+            line_len = 1.8
+            heading_line.set_data(
+                [centroid_x, centroid_x + line_len * math.cos(average_heading)],
+                [centroid_y, centroid_y + line_len * math.sin(average_heading)],
             )
-
-            if quiver is not None:
-                quiver.remove()
-            quiver = ax.quiver(
-                query_points[:, 0],
-                query_points[:, 1],
-                flow_display[:, 0],
-                flow_display[:, 1],
-                angles="xy",
-                scale_units="xy",
-                scale=1.0,
-                color="darkorange",
-                width=0.0035,
-                alpha=0.85,
-                zorder=2,
+            head_line.set_data(
+                [centroid_x, centroid_x + line_len * math.cos(first_link_heading)],
+                [centroid_y, centroid_y + line_len * math.sin(first_link_heading)],
             )
 
             ax.set_xlim(centroid_x - ARGS.view_range, centroid_x + ARGS.view_range)
@@ -385,8 +272,8 @@ def main():
                 f"Disp30: {env.last_recent_displacement:.4f}\n"
                 f"Gate30: {env.displacement_gate_ref:.4f}\n"
                 f"Dir_scale: {env.last_displacement_scale:.3f}\n"
-                f"Grid spacing: {ARGS.grid_spacing:.2f}\n"
-                f"Flow gain/clip: {ARGS.flow_gain:.2f}/{ARGS.flow_clip:.2f}"
+                f"HeadDeg: {first_link_deg:.2f}\n"
+                f"AvgDeg: {average_deg:.2f}"
             )
 
             fig.canvas.draw()
@@ -396,7 +283,7 @@ def main():
                 f"{step_idx:<6} | {reward:<10.4f} | {env.last_pressure_reward:<10.4f} | "
                 f"{env.last_direction_penalty:<10.4f} | {env.last_recent_displacement:<10.4f} | "
                 f"{env.displacement_gate_ref:<10.4f} | {env.last_displacement_scale:<8.3f} | "
-                f"{env.pressure_diff:<16.4f}"
+                f"{first_link_deg:<10.2f} | {average_deg:<10.2f}"
             )
 
             if done:

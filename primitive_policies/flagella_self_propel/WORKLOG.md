@@ -152,3 +152,28 @@ Recommended entry format for future rounds:
   - none for this specific crash; if the target machine later fails deeper in RLlib restore, that would be a separate environment-compatibility issue
 - Next step:
   - rerun the visualizer on the target machine and check whether action inference now proceeds into the rendering loop
+
+---
+
+## Entry 007
+
+- Time: 2026-04-03
+- Goal: remove the fluid point-lattice display and rewrite the self-propel visualizer to match the older reorient visualizer style more closely
+- Key findings:
+  - the fluid-arrow overlay made the script heavier and less aligned with the reference visualizer the user wanted to follow
+  - the core requirements for this branch are simpler: restore PPO, run deterministic policy rollout, show body geometry, centroid trace, heading cues, and reward diagnostics
+  - checkpoint-path compatibility and RLlib action-output compatibility still need to remain in place after simplifying the rendering
+- Files touched:
+  - `primitive_policies/flagella_self_propel/visualize_self_propel.py`
+  - `primitive_policies/flagella_self_propel/CODE_INDEX.md`
+  - `primitive_policies/flagella_self_propel/WORKLOG.md`
+- Actual changes:
+  - removed the fluid lattice and arrow rendering logic entirely
+  - rewrote the visualizer as a simpler real-time rollout window centered on swimmer body, centroid trace, centroid marker, and heading lines
+  - kept CLI controls for `--num_cpus` and `--num_threads`
+  - kept compatibility with directory-style RLlib checkpoints and variant `compute_single_action(...)` return formats
+  - updated the index document to describe the simplified visualization behavior and current CLI surface
+- Open questions:
+  - none in the current rendering path; any future flow-field display should be reintroduced as a separate mode instead of being part of the default visualizer
+- Next step:
+  - run the rewritten visualizer on the target machine and confirm that checkpoint restore and live rendering now behave like the older reference script

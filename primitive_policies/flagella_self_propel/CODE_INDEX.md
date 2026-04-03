@@ -20,7 +20,7 @@ This index only covers `flagella_self_propel`. It intentionally ignores the othe
 | `calculate_v.py` | Low-level hydrodynamics and time integration core. | Loads `.pt` mapping files on import; computes velocities, pressure, RK2 updates. |
 | `swimmer.py` | Gym environment wrapper around the swimmer physics. | Defines reward, state/action spaces, trajectory buffers, and periodic `.pt` trajectory dumps. |
 | `train.py` | PPO training entrypoint using Ray RLlib + PyTorch. | Creates `policy_<timestamp>/`, `traj/`, `traj2/`, `trajp/`; trains and checkpoints policy. |
-| `visualize_self_propel.py` | Real-time policy visualizer. | Loads a checkpoint, runs the trained PPO policy, and renders the swimmer plus a lattice-based fluid arrow field. |
+| `visualize_self_propel.py` | Real-time policy visualizer. | Loads a checkpoint, runs the trained PPO policy, and renders the swimmer body, heading cues, and centroid trace. |
 | `readme.txt` | Original short English note about generated output folders. | Reference only. |
 | `readme.md` | Existing local overview for this branch. | Useful as prior context, but this file is the maintained index going forward. |
 
@@ -210,17 +210,16 @@ Purpose:
 
 - loads the latest or user-specified PPO checkpoint for this branch
 - runs the trained policy in the self-propel environment with `explore=False`
-- renders the swimmer body, centroid trace, and a fixed-spacing fluid lattice
-- visualizes the fluid effect with arrow direction and length changes derived from the solved Stokes forces
+- renders the swimmer body, centroid trace, centroid marker, and heading cues in a simple real-time window
 
 Important details:
 
 - parses `--num_cpus` and `--num_threads` before importing the environment so visualization matches the same thread-control pattern as training
-- calls `os.chdir(BASE_DIR)` before importing `swimmer.py` / `calculate_v.py`, because the solver loads `.pt` preprocessing files from the working directory
+- calls `os.chdir(BASE_DIR)` before importing `swimmer.py`, because the environment depends on the same working-directory assumptions as training
 - auto-detects the latest `policy_*` checkpoint if `--checkpoint` is not provided
 - accepts both older file-style checkpoint paths and newer RLlib directory-style checkpoints such as `.../10/checkpoint_000011`
-- reconstructs the instantaneous force solution locally for visualization, without changing training-time reward logic
-- uses a fixed-spacing point lattice and masks arrows too close to the swimmer body for readability
+- prints the current reward decomposition in both the terminal and the plot overlay
+- stays close to the older reorient visualizer style instead of adding extra fluid-field rendering
 
 ## 6. Function and class index
 
@@ -320,13 +319,13 @@ Source:
 | inspect trajectory file writing | [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):391-397 |
 | inspect checkpoint saving | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):153-169 |
 | run or modify policy visualization | `visualize_self_propel.py` |
-| tune fluid lattice spacing / arrow scaling | `visualize_self_propel.py` via `--grid_spacing`, `--flow_gain`, `--flow_clip`, `--body_mask_radius` |
+| adjust visualization window, playback speed, or trace length | `visualize_self_propel.py` via `--view_range`, `--speed`, `--trace_len`, `--steps` |
 
 ## 9. Known constraints and pitfalls
 
 - `reset()` is reset-free. It clears reward and episode counters, but it does not rebuild `self.state` or `self.Xfirst` from the original initialization. See [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):421-449.
 - `calculate_v.py` has import-time side effects. Missing `.pt` files will break environment import before training starts.
-- `visualize_self_propel.py` depends on the same `.pt` preprocessing files as training, because it imports `calculate_v.py`.
+- `visualize_self_propel.py` depends on the same environment-side `.pt` preprocessing files as training, because it imports `swimmer.py`, which imports `calculate_v.py`.
 - `STOKES_NUM_THREADS` is set in `train.py` before importing `swimmer.py`, specifically so `calculate_v.py` picks it up during import.
 - policy output path is timestamped `policy_<timestamp>`, not the older fixed `policy/` layout used elsewhere.
 - `traj`, `traj2`, and `trajp` are flushed only every 4000 steps. If training stops early, in-memory data since the last flush will not be written automatically.
