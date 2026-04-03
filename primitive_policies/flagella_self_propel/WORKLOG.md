@@ -36,3 +36,77 @@ Recommended entry format for future rounds:
   - none for this setup round; later tasks may decide whether stale helpers such as `_get_obs()` should be cleaned up
 - Next step:
   - for all subsequent tasks in this branch, consult `CODE_INDEX.md` first and append one new worklog entry after each meaningful round
+
+---
+
+## Entry 002
+
+- Time: 2026-04-03
+- Goal: change the direction-stability reward term to use equal-length direction windows and a net-displacement gate
+- Key findings:
+  - the old implementation compared a 60-step historical vector against a 30-step recent vector, so the two direction windows were not symmetric
+  - the old direction penalty scale depended on `abs(pressure_diff)`, which couples stability punishment to pressure generation rather than actual net motion
+  - `step()` already tracks centroid history, so this change can stay localized to `swimmer.py`
+- Files touched:
+  - `primitive_policies/flagella_self_propel/swimmer.py`
+  - `primitive_policies/flagella_self_propel/CODE_INDEX.md`
+  - `primitive_policies/flagella_self_propel/WORKLOG.md`
+- Actual changes:
+  - changed centroid-history window length from 91 to 61 so the penalty uses two equal 30-step windows
+  - changed the direction comparison to `t-60 -> t-30` versus `t-30 -> t`
+  - replaced pressure-based penalty scaling with a recent 30-step net-displacement gate: `min(recent_norm / 0.05, 1.0)`
+  - updated debug prints and index documentation to match the new reward logic
+- Open questions:
+  - the current displacement reference `0.05` is an initial tuning value and may need adjustment after observing training curves
+  - `reset()` still preserves centroid history across reset-free episodes by design; if this turns out to distort the penalty, the history policy should be revisited explicitly
+- Next step:
+  - run a short training comparison and inspect whether the agent still learns to build pressure difference while reducing large heading swings
+
+---
+
+## Entry 003
+
+- Time: 2026-04-03
+- Goal: expose the displacement gate threshold directly in the 200-step training log output
+- Key findings:
+  - the displacement gate was still hardcoded inside the direction-penalty calculation, so the log showed `Disp30` and `Dir_scale` but not the threshold value that produced that scale
+  - the cleanest fix is to promote the threshold to a named environment attribute and print it alongside the existing diagnostics
+- Files touched:
+  - `primitive_policies/flagella_self_propel/swimmer.py`
+  - `primitive_policies/flagella_self_propel/CODE_INDEX.md`
+  - `primitive_policies/flagella_self_propel/WORKLOG.md`
+- Actual changes:
+  - introduced `self.displacement_gate_ref = 0.05`
+  - changed the displacement gate formula to divide by `self.displacement_gate_ref`
+  - updated the 200-step callback printout to include `Gate30`
+  - synchronized the index document with the new logging behavior
+- Open questions:
+  - none beyond tuning `self.displacement_gate_ref` after observing the new logs
+- Next step:
+  - run training and compare `Disp30` against `Gate30` in the callback output to decide whether the gate should be tightened or relaxed
+
+---
+
+## Entry 004
+
+- Time: 2026-04-03
+- Goal: add a runnable policy visualizer for the self-propel branch, including a lattice-based fluid-field display
+- Key findings:
+  - the existing reorient visualizer can be reused structurally for checkpoint discovery, PPO restore, and real-time plotting
+  - this branch does not expose a ready-made flow-field helper, but the visualization can reconstruct the instantaneous solved force field by reusing public functions from `calculate_v.py`
+  - because `calculate_v.py` loads preprocessing `.pt` files relative to the working directory, the visualization script needs to set its own working directory before importing the environment
+- Files touched:
+  - `primitive_policies/flagella_self_propel/visualize_self_propel.py`
+  - `primitive_policies/flagella_self_propel/CODE_INDEX.md`
+  - `primitive_policies/flagella_self_propel/WORKLOG.md`
+- Actual changes:
+  - added `visualize_self_propel.py`
+  - added command-line controls for `--num_cpus` and `--num_threads`
+  - implemented latest-checkpoint auto-discovery for `policy_*` outputs
+  - implemented a fixed-spacing fluid lattice with arrow direction and length driven by the instantaneous solved Stokes-flow field
+  - added body-near masking and display scaling controls for the fluid arrows
+- Open questions:
+  - if the arrow field looks too dense or too small in practice, `--grid_spacing`, `--flow_gain`, and `--flow_clip` will likely need a first round of tuning
+  - the fluid field currently visualizes the solved swimmer-induced flow in the 2D motion plane; if you later want streamlines or pressure overlays, that should be added as a separate rendering mode
+- Next step:
+  - run the visualizer against a real checkpoint and tune the lattice spacing / arrow scaling for the policy you care about most

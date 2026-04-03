@@ -20,6 +20,7 @@ This index only covers `flagella_self_propel`. It intentionally ignores the othe
 | `calculate_v.py` | Low-level hydrodynamics and time integration core. | Loads `.pt` mapping files on import; computes velocities, pressure, RK2 updates. |
 | `swimmer.py` | Gym environment wrapper around the swimmer physics. | Defines reward, state/action spaces, trajectory buffers, and periodic `.pt` trajectory dumps. |
 | `train.py` | PPO training entrypoint using Ray RLlib + PyTorch. | Creates `policy_<timestamp>/`, `traj/`, `traj2/`, `trajp/`; trains and checkpoints policy. |
+| `visualize_self_propel.py` | Real-time policy visualizer. | Loads a checkpoint, runs the trained PPO policy, and renders the swimmer plus a lattice-based fluid arrow field. |
 | `readme.txt` | Original short English note about generated output folders. | Reference only. |
 | `readme.md` | Existing local overview for this branch. | Useful as prior context, but this file is the maintained index going forward. |
 
@@ -174,9 +175,11 @@ Action semantics:
 
 Reward terms:
 
-- pressure reward: `pressure_diff.item() * 12` at [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):267-268
-- direction penalty: based on the angle between older and recent centroid-motion vectors, scaled by current pressure magnitude, at [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):274-289
-- total reward accumulated into `self.reward` at [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):300
+- pressure reward: `pressure_diff.item() * 12` at [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):269-270
+- direction penalty: compares two equal 30-step centroid-direction windows, `t-60 -> t-30` versus `t-30 -> t`, and gates the penalty by the recent 30-step net displacement instead of pressure magnitude at [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):272-295
+- current displacement gate: `min(recent_norm / self.displacement_gate_ref, 1.0)` with `self.displacement_gate_ref = 0.05` at [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):163-164 and [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):294
+- every 200 steps, debug logging now prints both `Disp30` and `Gate30` so the displacement threshold can be tuned from training logs
+- total reward accumulated into `self.reward` at [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):305
 
 Trajectory dumps:
 
@@ -184,7 +187,7 @@ Trajectory dumps:
   - `traj/traj_<idx>.pt`
   - `traj2/traj2_<idx>.pt`
   - `trajp/trajp_<idx>.pt`
-- flush logic at [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):385-394
+- flush logic at [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):391-397
 
 ### `train.py`
 
@@ -200,6 +203,23 @@ Output folder behavior:
 
 - policy root is timestamped as `policy_<YYYYMMDD_HHMMSS>` at [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):25-26
 - trajectory directories `traj/`, `traj2/`, `trajp/` are created if missing at [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):137-148
+
+### `visualize_self_propel.py`
+
+Purpose:
+
+- loads the latest or user-specified PPO checkpoint for this branch
+- runs the trained policy in the self-propel environment with `explore=False`
+- renders the swimmer body, centroid trace, and a fixed-spacing fluid lattice
+- visualizes the fluid effect with arrow direction and length changes derived from the solved Stokes forces
+
+Important details:
+
+- parses `--num_cpus` and `--num_threads` before importing the environment so visualization matches the same thread-control pattern as training
+- calls `os.chdir(BASE_DIR)` before importing `swimmer.py` / `calculate_v.py`, because the solver loads `.pt` preprocessing files from the working directory
+- auto-detects the latest `policy_*` checkpoint if `--checkpoint` is not provided
+- reconstructs the instantaneous force solution locally for visualization, without changing training-time reward logic
+- uses a fixed-spacing point lattice and masks arrows too close to the swimmer body for readability
 
 ## 6. Function and class index
 
@@ -229,12 +249,12 @@ Output folder behavior:
 | --- | --- | --- |
 | `swimmer_gym` | 71 | Main Gym environment class for PPO training. |
 | `swimmer_gym.__init__(self, env_config)` | 77 | Initializes action/observation spaces, initial state, reward bookkeeping, trajectory buffers, and debug counters. |
-| `swimmer_gym.seed(self, seed=None)` | 173 | Standard Gym seeding hook. |
-| `swimmer_gym.step(self, action)` | 177 | Clips and validates actions, calls `RK`, computes reward, appends trajectory rows, and conditionally writes files. |
-| `swimmer_gym.reset(self)` | 414 | Reset-free episode reset: clears reward/debug counters but does not restore the geometric state to the original initial condition. |
-| `swimmer_gym._get_obs(self)` | 444 | Legacy helper returning a concatenation involving `self.reach_targets`; currently stale for this branch. |
-| `swimmer_gym.render(self)` | 447 | Stub. |
-| `swimmer_gym.close(self)` | 451 | Closes `viewer` if one exists. |
+| `swimmer_gym.seed(self, seed=None)` | 175 | Standard Gym seeding hook. |
+| `swimmer_gym.step(self, action)` | 179 | Clips and validates actions, calls `RK`, computes reward, appends trajectory rows, and conditionally writes files. |
+| `swimmer_gym.reset(self)` | 421 | Reset-free episode reset: clears reward/debug counters but does not restore the geometric state to the original initial condition. |
+| `swimmer_gym._get_obs(self)` | 451 | Legacy helper returning a concatenation involving `self.reach_targets`; currently stale for this branch. |
+| `swimmer_gym.render(self)` | 454 | Stub. |
+| `swimmer_gym.close(self)` | 458 | Closes `viewer` if one exists. |
 
 ## 7. Output data index
 
@@ -255,7 +275,7 @@ Each row:
 
 Source:
 
-- assembled in [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):349-354
+- assembled in [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):345-359
 
 ### `traj2/`
 
@@ -268,7 +288,7 @@ Each row:
 
 Source:
 
-- assembled in [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):340-359
+- assembled in [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):345-364
 
 ### `trajp/`
 
@@ -280,7 +300,7 @@ Each row:
 
 Source:
 
-- assembled in [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):371-374
+- assembled in [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):376-379
 
 ## 8. Quick lookup table
 
@@ -291,22 +311,26 @@ Source:
 | change action / observation dimensions | [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):22, [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):86-87 |
 | change hinge angle limits | [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):82-83, [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):212-226 |
 | change initial swimmer position | [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):102-112 |
-| change reward terms | [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):267-289 |
-| remove or alter direction-stability penalty | [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):270-289 |
+| change reward terms | [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):269-295 |
+| remove or alter direction-stability penalty | [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):272-295 |
 | inspect import-time file dependencies | [`calculate_v.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/calculate_v.py):25-33 |
 | inspect the main hydrodynamic solve | [`calculate_v.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/calculate_v.py):551-660 |
 | inspect RK integration | [`calculate_v.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/calculate_v.py):809-852 |
-| inspect trajectory file writing | [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):385-394 |
+| inspect trajectory file writing | [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):391-397 |
 | inspect checkpoint saving | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):153-169 |
+| run or modify policy visualization | `visualize_self_propel.py` |
+| tune fluid lattice spacing / arrow scaling | `visualize_self_propel.py` via `--grid_spacing`, `--flow_gain`, `--flow_clip`, `--body_mask_radius` |
 
 ## 9. Known constraints and pitfalls
 
-- `reset()` is reset-free. It clears reward and episode counters, but it does not rebuild `self.state` or `self.Xfirst` from the original initialization. See [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):414-442.
+- `reset()` is reset-free. It clears reward and episode counters, but it does not rebuild `self.state` or `self.Xfirst` from the original initialization. See [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):421-449.
 - `calculate_v.py` has import-time side effects. Missing `.pt` files will break environment import before training starts.
+- `visualize_self_propel.py` depends on the same `.pt` preprocessing files as training, because it imports `calculate_v.py`.
 - `STOKES_NUM_THREADS` is set in `train.py` before importing `swimmer.py`, specifically so `calculate_v.py` picks it up during import.
 - policy output path is timestamped `policy_<timestamp>`, not the older fixed `policy/` layout used elsewhere.
 - `traj`, `traj2`, and `trajp` are flushed only every 4000 steps. If training stops early, in-memory data since the last flush will not be written automatically.
-- `_get_obs()` still references `self.reach_targets`, but this attribute is not initialized anywhere in this branch's `__init__`. This method looks stale and should not be trusted without inspection. See [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):444-445.
+- the direction-stability penalty now starts only after 61 centroid samples are available, because it compares two equal 30-step windows.
+- `_get_obs()` still references `self.reach_targets`, but this attribute is not initialized anywhere in this branch's `__init__`. This method looks stale and should not be trusted without inspection. See [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):451-452.
 - there are many commented blocks from earlier experiments. Prefer tracing active logic from `train.py -> swimmer.py.step() -> calculate_v.py.RK()`.
 
 ## 10. Minimal reading order for future tasks
