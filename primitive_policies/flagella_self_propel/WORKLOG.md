@@ -177,3 +177,26 @@ Recommended entry format for future rounds:
   - none in the current rendering path; any future flow-field display should be reintroduced as a separate mode instead of being part of the default visualizer
 - Next step:
   - run the rewritten visualizer on the target machine and confirm that checkpoint restore and live rendering now behave like the older reference script
+
+---
+
+## Entry 008
+
+- Time: 2026-04-04
+- Goal: stop iterating on the custom visualizer structure and instead replace it with a direct adaptation of the older `visualize_reorient.py`
+- Key findings:
+  - the user wanted the self-propel visualizer to follow the reference script much more literally, not just match it conceptually
+  - the cleanest way to do that was to replace the file wholesale with the same top-level structure: `parse_args -> latest-checkpoint lookup -> PPO restore -> Matplotlib loop`
+  - self-propel still needs a few branch-specific adjustments: local `policy_*` checkpoint layout, `STOKES_NUM_THREADS`, reward breakdown display, and directory-style RLlib checkpoint support
+- Files touched:
+  - `primitive_policies/flagella_self_propel/visualize_self_propel.py`
+  - `primitive_policies/flagella_self_propel/CODE_INDEX.md`
+  - `primitive_policies/flagella_self_propel/WORKLOG.md`
+- Actual changes:
+  - replaced `visualize_self_propel.py` with a new script patterned directly after `F:\\fyp\\RL_Research\\visualize_reorient.py`
+  - kept only the self-propel-specific changes needed for environment setup, checkpoint discovery, reward diagnostics, and RLlib action-output compatibility
+  - removed the centroid-trace-centric custom layout and returned to a simpler reference-style real-time plot
+- Open questions:
+  - none in the script structure; if later changes are needed, they should be made by comparing against the reference visualizer first rather than evolving this file independently
+- Next step:
+  - run the new reference-style self-propel visualizer against a real checkpoint and verify that the on-screen behavior now matches expectations

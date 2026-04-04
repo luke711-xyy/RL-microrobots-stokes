@@ -20,7 +20,7 @@ This index only covers `flagella_self_propel`. It intentionally ignores the othe
 | `calculate_v.py` | Low-level hydrodynamics and time integration core. | Loads `.pt` mapping files on import; computes velocities, pressure, RK2 updates. |
 | `swimmer.py` | Gym environment wrapper around the swimmer physics. | Defines reward, state/action spaces, trajectory buffers, and periodic `.pt` trajectory dumps. |
 | `train.py` | PPO training entrypoint using Ray RLlib + PyTorch. | Creates `policy_<timestamp>/`, `traj/`, `traj2/`, `trajp/`; trains and checkpoints policy. |
-| `visualize_self_propel.py` | Real-time policy visualizer. | Loads a checkpoint, runs the trained PPO policy, and renders the swimmer body, heading cues, and centroid trace. |
+| `visualize_self_propel.py` | Real-time policy visualizer. | Loads a checkpoint, runs the trained PPO policy, and renders the swimmer body plus heading cues in the same overall style as the reorient visualizer. |
 | `readme.txt` | Original short English note about generated output folders. | Reference only. |
 | `readme.md` | Existing local overview for this branch. | Useful as prior context, but this file is the maintained index going forward. |
 
@@ -210,7 +210,7 @@ Purpose:
 
 - loads the latest or user-specified PPO checkpoint for this branch
 - runs the trained policy in the self-propel environment with `explore=False`
-- renders the swimmer body, centroid trace, centroid marker, and heading cues in a simple real-time window
+- renders the swimmer body, centroid marker, and heading cues in a simple real-time window
 
 Important details:
 
@@ -219,7 +219,7 @@ Important details:
 - auto-detects the latest `policy_*` checkpoint if `--checkpoint` is not provided
 - accepts both older file-style checkpoint paths and newer RLlib directory-style checkpoints such as `.../10/checkpoint_000011`
 - prints the current reward decomposition in both the terminal and the plot overlay
-- stays close to the older reorient visualizer style instead of adding extra fluid-field rendering
+- now follows the older `visualize_reorient.py` structure closely instead of extending the plot with extra visualization layers
 
 ## 6. Function and class index
 
