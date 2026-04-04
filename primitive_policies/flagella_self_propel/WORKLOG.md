@@ -200,3 +200,47 @@ Recommended entry format for future rounds:
   - none in the script structure; if later changes are needed, they should be made by comparing against the reference visualizer first rather than evolving this file independently
 - Next step:
   - run the new reference-style self-propel visualizer against a real checkpoint and verify that the on-screen behavior now matches expectations
+
+---
+
+## Entry 009
+
+- Time: 2026-04-04
+- Goal: replace the current self-propel visualizer with a version that copies the older `F:\\fyp\\STOKES\\RL_microrobots-master(yuan)\\primitive_policies\\flagella_self_propel\\visualize.py` structure as literally as possible
+- Key findings:
+  - the user did not want a merely similar visualizer; they wanted the reference file's section order, plotting flow, and comment style carried over directly
+  - the minimum branch-specific changes needed on top of the reference file are: local `policy_*` checkpoint discovery, directory-style RLlib checkpoint support, `STOKES_NUM_THREADS`, self-propel reward diagnostics, and RLlib action-output compatibility
+  - this worktree currently does not have `ray` installed, so runtime `--help` validation cannot complete even though static compilation succeeds
+- Files touched:
+  - `primitive_policies/flagella_self_propel/visualize_self_propel.py`
+  - `primitive_policies/flagella_self_propel/WORKLOG.md`
+- Actual changes:
+  - rewrote `visualize_self_propel.py` from the reference `visualize.py` instead of evolving the previous custom script
+  - preserved the reference file's main five-part structure and plotting loop
+  - only changed the pieces required to fit the current self-propel training task
+- Open questions:
+  - none in file structure; the remaining validation gap is purely the missing local `ray` dependency in this worktree
+- Next step:
+  - test the rewritten visualizer in an environment with `ray` installed and a real self-propel checkpoint available
+
+---
+
+## Entry 010
+
+- Time: 2026-04-04
+- Goal: fix the visualizer initialization order so `--num_threads` takes effect on macOS and other machines
+- Key findings:
+  - the previous script set `STOKES_NUM_THREADS` inside `main()`, which is too late because importing `swimmer.py` already triggers `calculate_v.py`
+  - to make the thread-count flag effective, argument parsing and environment-variable setup must happen before importing `swimmer.py`
+  - moving argument parsing to the top also lets `--help` exit before importing `ray`, which improves behavior on machines with incomplete environments
+- Files touched:
+  - `primitive_policies/flagella_self_propel/visualize_self_propel.py`
+  - `primitive_policies/flagella_self_propel/WORKLOG.md`
+- Actual changes:
+  - moved argument parsing to module initialization
+  - set `STOKES_NUM_THREADS` before importing `swimmer.py`
+  - kept the reference-style visualizer structure while fixing the import order
+- Open questions:
+  - none in code logic; remaining runtime compatibility still depends on the target machine having `ray`, `rllib`, `matplotlib`, and `torch`
+- Next step:
+  - verify `--help` and a real checkpoint restore on the target machine, then keep this order as the baseline for future visualizer edits

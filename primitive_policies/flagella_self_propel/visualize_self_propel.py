@@ -1,5 +1,4 @@
 import argparse
-import math
 import os
 import sys
 from pathlib import Path
@@ -8,40 +7,67 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 
 
+# ================= 3. 参数解析 =================
 def parse_args():
-    parser = argparse.ArgumentParser(description="Self-Propel Task Real-Time Visualizer")
+    parser = argparse.ArgumentParser(description="Micro-Robot Real-Time Visualizer")
+
     parser.add_argument(
         "--checkpoint",
         type=str,
         default=None,
-        help="Checkpoint path. If omitted, automatically use the latest local policy.",
+        help="Checkpoint path. If omitted, auto-detect the latest checkpoint under local policy_* folders.",
     )
-    parser.add_argument("--steps", type=int, default=2000, help="Simulation steps to visualize.")
-    parser.add_argument("--speed", type=float, default=0.03, help="Refresh interval in seconds.")
-    parser.add_argument("--num_cpus", type=int, default=1, help="Number of CPUs for Ray.")
+
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=1000,
+        help="Total visualization steps (default: 1000)",
+    )
+
+    parser.add_argument(
+        "--speed",
+        type=float,
+        default=0.001,
+        help="Refresh interval in seconds; smaller is faster (default: 0.001)",
+    )
+
+    parser.add_argument(
+        "--num_cpus",
+        type=int,
+        default=1,
+        help="Number of CPUs used by Ray (default: 1)",
+    )
+
     parser.add_argument(
         "--num_threads",
         type=int,
         default=5,
-        help="Number of PyTorch threads for the Stokes solver.",
+        help="Number of PyTorch threads used by the Stokes solver (default: 5)",
     )
+
     parser.add_argument(
         "--view_range",
         type=float,
-        default=4.5,
-        help="Half-width of the plotting window around the swimmer centroid.",
+        default=4.0,
+        help="Half-width of the camera-follow window (default: 4.0)",
     )
+
     return parser.parse_args()
 
 
 ARGS = parse_args()
 os.environ["STOKES_NUM_THREADS"] = str(ARGS.num_threads)
+
+
+# ================= 1. 强制设置绘图后端 (关键) =================
 os.chdir(BASE_DIR)
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 import matplotlib
 
+# 强制使用 TkAgg 后端，确保在终端运行时能弹出窗口
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -74,16 +100,16 @@ def checkpoint_sort_key(path):
 def find_latest_checkpoint(base_dir=None):
     base_dir = Path(base_dir or BASE_DIR)
     if not base_dir.exists():
-        return None, None
+        return None
 
     policy_roots = [path for path in base_dir.iterdir() if path.is_dir() and path.name.startswith("policy_")]
     if not policy_roots:
-        return None, None
+        return None
 
     latest_policy = max(policy_roots, key=lambda path: path.stat().st_mtime)
     iter_dirs = [path for path in latest_policy.iterdir() if path.is_dir() and path.name.isdigit()]
     if not iter_dirs:
-        return None, latest_policy
+        return None
 
     latest_iter_dir = max(iter_dirs, key=lambda path: int(path.name))
     checkpoint_paths = sorted(
@@ -91,47 +117,83 @@ def find_latest_checkpoint(base_dir=None):
         key=checkpoint_sort_key,
     )
     if not checkpoint_paths:
-        return None, latest_policy
+        return None
 
-    return checkpoint_paths[-1], latest_policy
+    return checkpoint_paths[-1]
 
 
 def resolve_checkpoint(path_str):
-    checkpoint_path = Path(path_str).expanduser().resolve()
-    if checkpoint_path.is_file():
-        return checkpoint_path
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"Checkpoint path does not exist: {checkpoint_path}")
+    cp_path = Path(path_str).expanduser().resolve()
+    if cp_path.is_file():
+        return cp_path
+    if not cp_path.exists():
+        raise FileNotFoundError(f"Checkpoint path does not exist: {cp_path}")
 
-    if is_checkpoint_path(checkpoint_path):
-        return checkpoint_path
+    if is_checkpoint_path(cp_path):
+        return cp_path
 
     direct_candidates = sorted(
-        [candidate for candidate in checkpoint_path.iterdir() if is_checkpoint_path(candidate)],
+        [candidate for candidate in cp_path.iterdir() if is_checkpoint_path(candidate)],
         key=checkpoint_sort_key,
     )
     if direct_candidates:
         return direct_candidates[-1]
 
     nested_candidates = sorted(
-        [candidate for candidate in checkpoint_path.rglob("*") if is_checkpoint_path(candidate)],
+        [candidate for candidate in cp_path.rglob("*") if is_checkpoint_path(candidate)],
         key=checkpoint_sort_key,
     )
     if nested_candidates:
         return nested_candidates[-1]
 
-    raise FileNotFoundError(f"No checkpoint found under: {checkpoint_path}")
+    raise FileNotFoundError(f"No checkpoint found under: {cp_path}")
 
 
+def unpack_action_output(action_output, prev_state):
+    if not isinstance(action_output, tuple):
+        return action_output, prev_state
+
+    if len(action_output) == 0:
+        raise ValueError("compute_single_action returned an empty tuple")
+
+    action = action_output[0]
+    next_state = prev_state
+    if len(action_output) >= 2 and isinstance(action_output[1], (list, tuple)):
+        next_state = action_output[1]
+    return action, next_state
+
+
+def compute_average_heading(state_array):
+    head_omega = state_array[2]
+    running_angle = head_omega
+    angle_sum = head_omega
+    for beta in state_array[3:]:
+        running_angle += beta
+        angle_sum += running_angle
+    return angle_sum / (len(state_array) - 2)
+
+
+# ================= 2. 配置函数 (需与 train.py 一致) =================
 def get_config():
+    """
+    复制 train.py 中的关键配置，确保模型能正确加载。
+    """
     config = ppo.DEFAULT_CONFIG.copy()
+
+    # 资源与框架
     config["num_gpus"] = 0
     config["num_workers"] = 0
     config["num_rollout_workers"] = 0
     config["framework"] = "torch"
+
+    # 网络结构 (LSTM)
+    config["use_lstm"] = True
+    config["max_seq_len"] = 20
+
+    # 环境与训练关键参数
+    config["horizon"] = 1000
     config["gamma"] = 0.9999
     config["lr"] = 0.0003
-    config["horizon"] = 1000
     config["evaluation_duration"] = 10000000
     config["lr_schedule"] = None
     config["use_critic"] = True
@@ -151,118 +213,115 @@ def get_config():
     config["kl_target"] = 0.01
     config["evaluation_interval"] = 1000000
     config["evaluation_duration"] = 1
-    config["use_lstm"] = True
-    config["max_seq_len"] = 20
     config["min_sample_timesteps_per_iteration"] = 1000
+
+    # 必须传入环境类
+    config["env"] = swimmer_gym
+
     return config
 
 
-def unpack_action_output(action_output, prev_state):
-    if not isinstance(action_output, tuple):
-        return action_output, prev_state
-
-    if len(action_output) == 0:
-        raise ValueError("compute_single_action returned an empty tuple")
-
-    action = action_output[0]
-    next_state = prev_state
-    if len(action_output) >= 2 and isinstance(action_output[1], (list, tuple)):
-        next_state = action_output[1]
-    return action, next_state
-
-
-def compute_average_heading(state):
-    heading = float(state[2])
-    running_angle = heading
-    angle_sum = heading
-    for beta in state[3:]:
-        running_angle += float(beta)
-        angle_sum += running_angle
-    return angle_sum / (len(state) - 2)
-
-
+# ================= 4. 主程序 =================
 def main():
     args = ARGS
 
-    checkpoint_path = Path(args.checkpoint).expanduser().resolve() if args.checkpoint else None
-    if checkpoint_path is None:
-        print("Searching for the latest local policy...")
-        checkpoint_path, policy_root = find_latest_checkpoint()
-        if checkpoint_path is None:
-            print("[Error] No checkpoint found. Run train.py first or pass --checkpoint.")
-            sys.exit(1)
-        print(f"Found latest policy under:\n  {policy_root}")
-    else:
-        checkpoint_path = resolve_checkpoint(str(checkpoint_path))
-
-    print("=" * 48)
-    print(f"Using checkpoint: {checkpoint_path}")
-    print(f"Visualization directory: {BASE_DIR}")
-    print(f"Ray CPUs: {args.num_cpus}, PyTorch threads: {args.num_threads}")
-    print("=" * 48)
-
+    # --- 初始化 Ray ---
     if ray.is_initialized():
         ray.shutdown()
     ray.init(ignore_reinit_error=True, num_cpus=args.num_cpus, log_to_driver=False)
 
+    # --- 实例化环境和 Agent ---
     env = swimmer_gym({})
     obs = env.reset()
-
-    origin_x = env.X_ini
-    origin_y = env.Y_ini
 
     config = get_config()
     agent = ppo.PPO(config=config, env=swimmer_gym)
 
-    print("Loading checkpoint...")
+    # --- 加载模型 (路径自动纠错 + 自动寻找最新 checkpoint) ---
+    if args.checkpoint:
+        cp_path = resolve_checkpoint(args.checkpoint)
+    else:
+        cp_path = find_latest_checkpoint()
+        if cp_path is None:
+            print("\n[Error] No checkpoint found. Run train.py first or pass --checkpoint.")
+            sys.exit(1)
+
+    print(f"Loading checkpoint: {cp_path}")
+    print(f"Ray CPUs: {args.num_cpus}, PyTorch threads: {args.num_threads}")
     try:
-        agent.restore(str(checkpoint_path))
-        print(">>> Checkpoint restore succeeded. Starting visualization...")
-    except Exception as error:
-        print(f"[Error] Failed to restore checkpoint: {error}")
-        ray.shutdown()
+        agent.restore(str(cp_path))
+        print(">>> Checkpoint restore succeeded. Launching visualization window...")
+    except Exception as e:
+        print(f"\n[Error] Failed to restore checkpoint: {e}")
+        print("Please check the path, checkpoint layout, or RLlib version.")
         sys.exit(1)
 
-    policy = agent.get_policy()
-    state = policy.get_initial_state()
-
+    # --- 准备绘图窗口 (实时模式) ---
     plt.ion()
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(10, 6))
     ax.set_aspect("equal")
     ax.grid(True, linestyle="--", alpha=0.5)
-    ax.set_title("Self-Propel Task Visualization")
+    ax.set_title("Real-Time Simulation (Running...)")
     ax.set_xlabel("X Position")
     ax.set_ylabel("Y Position")
 
-    body_line, = ax.plot([], [], "-", lw=3, markersize=5, color="royalblue", label="Robot Body")
-    average_heading_line, = ax.plot([], [], "--", color="green", lw=2.0, label="Average Heading")
-    first_link_line, = ax.plot([], [], "-", color="red", lw=2.0, label="First Link Heading")
-    centroid_marker, = ax.plot([], [], "o", color="crimson", markersize=6, label="Centroid")
-    ax.plot(origin_x, origin_y, "kx", markersize=8, label="Initial Centroid")
+    # 初始化绘图元素
+    # 机器人身体 (蓝色点线)
+    line, = ax.plot([], [], "-", lw=2, markersize=4, color="royalblue", label="Robot")
+    # 质心轨迹 (红色细线)
+    trace, = ax.plot([], [], "-", lw=1, color="crimson", alpha=0.5, label="Trace")
+    # 平均朝向辅助线 (绿色虚线)
+    avg_line, = ax.plot([], [], "--", lw=2, color="green", alpha=0.8, label="Average Heading")
+    # 首杆朝向辅助线 (橙色实线)
+    head_line, = ax.plot([], [], "-", lw=2, color="darkorange", alpha=0.9, label="Head Heading")
+    # 质心点
+    centroid_dot, = ax.plot([], [], "o", color="black", markersize=5, label="Centroid")
+    # 文字信息
     info_text = ax.text(
         0.02,
         0.95,
         "",
         transform=ax.transAxes,
-        fontsize=11,
+        fontsize=10,
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
         va="top",
-        bbox=dict(boxstyle="round", facecolor="white", alpha=0.9),
     )
-    plt.legend(loc="lower right")
 
-    print("-" * 118)
+    plt.legend(loc="upper right")
+
+    # --- 初始化 LSTM 状态 ---
+    policy = agent.get_policy()
+    state = policy.get_initial_state()
+
+    # 数据容器
+    history_x = []
+    history_y = []
+    total_reward = 0.0
+
+    print("-" * 110)
     print(
-        f"{'Step':<8} | {'AvgDeg':<10} | {'HeadDeg':<10} | {'Reward':<10} | "
-        f"{'P_rwd':<10} | {'Dir_pen':<10} | {'Disp30':<10} | {'Scale':<8}"
+        f"{'Step':<10} | {'X Coord':<12} | {'Y Coord':<12} | {'Reward':<12} | "
+        f"{'P_rwd':<10} | {'Dir_pen':<10} | {'Disp30':<10}"
     )
-    print("-" * 118)
+    print("-" * 110)
 
+    # ================= 5. 实时模拟循环 =================
     try:
-        for step_idx in range(args.steps):
-            action_output = agent.compute_single_action(observation=obs, state=state, explore=False)
+        for i in range(args.steps):
+            # (1) 计算动作
+            action_output = agent.compute_single_action(
+                observation=obs,
+                state=state,
+                explore=False,
+            )
             action, state = unpack_action_output(action_output, state)
-            obs, reward, done, _ = env.step(action)
 
+            # (2) 环境步进
+            obs, reward, done, info = env.step(action)
+            total_reward += reward
+
+            # (3) 获取数据
+            # env.XY_positions is an (N+1, 2) array
             robot_shape = env.XY_positions.copy()
             current_x = robot_shape[:, 0]
             current_y = robot_shape[:, 1]
@@ -271,63 +330,88 @@ def main():
             centroid_y = float(env.state[1])
             first_link_heading = float(env.state[2])
             average_heading = compute_average_heading(env.state)
-            first_link_deg = math.degrees(first_link_heading)
-            average_deg = math.degrees(average_heading)
 
-            body_line.set_data(current_x, current_y)
-            centroid_marker.set_data([centroid_x], [centroid_y])
+            # 记录轨迹 (取质心)
+            history_x.append(centroid_x)
+            history_y.append(centroid_y)
 
-            line_len = 2.5
-            average_heading_line.set_data(
-                [centroid_x, centroid_x + line_len * math.cos(average_heading)],
-                [centroid_y, centroid_y + line_len * math.sin(average_heading)],
+            # (4) 更新画面
+            # 更新机器人身体
+            line.set_data(current_x, current_y)
+
+            # 更新轨迹 (为保持流畅，只画最近 1000 步)
+            trace_len = 1000
+            if len(history_x) > trace_len:
+                trace.set_data(history_x[-trace_len:], history_y[-trace_len:])
+            else:
+                trace.set_data(history_x, history_y)
+
+            centroid_dot.set_data([centroid_x], [centroid_y])
+
+            line_len = 2.0
+            avg_line.set_data(
+                [centroid_x, centroid_x + line_len * np.cos(average_heading)],
+                [centroid_y, centroid_y + line_len * np.sin(average_heading)],
             )
-            first_link_line.set_data(
-                [centroid_x, centroid_x + line_len * math.cos(first_link_heading)],
-                [centroid_y, centroid_y + line_len * math.sin(first_link_heading)],
+            head_line.set_data(
+                [centroid_x, centroid_x + line_len * np.cos(first_link_heading)],
+                [centroid_y, centroid_y + line_len * np.sin(first_link_heading)],
             )
 
-            ax.set_xlim(centroid_x - args.view_range, centroid_x + args.view_range)
-            ax.set_ylim(centroid_y - args.view_range, centroid_y + args.view_range)
+            # 动态调整相机视野 (Camera Follow)
+            center_x = np.mean(current_x)
+            center_y = np.mean(current_y)
+            view_range = args.view_range
+            ax.set_xlim(center_x - view_range, center_x + view_range)
+            ax.set_ylim(center_y - view_range, center_y + view_range)
 
+            # 更新文字
             info_text.set_text(
-                f"Step: {step_idx + 1}\n"
-                f"Reward: {reward:.4f}\n"
-                f"P_rwd: {env.last_pressure_reward:.4f}\n"
-                f"Dir_pen: {env.last_direction_penalty:.4f}\n"
-                f"Disp30: {env.last_recent_displacement:.4f}\n"
-                f"Gate30: {env.displacement_gate_ref:.4f}\n"
-                f"Dir_scale: {env.last_displacement_scale:.3f}\n"
-                f"AvgDeg: {average_deg:.2f}\n"
-                f"HeadDeg: {first_link_deg:.2f}"
+                f"Step: {i + 1}\n"
+                f"X: {centroid_x:.2f}\n"
+                f"Y: {centroid_y:.2f}\n"
+                f"Reward: {total_reward:.2f}\n"
+                f"P_rwd: {env.last_pressure_reward:.3f}\n"
+                f"Dir_pen: {env.last_direction_penalty:.3f}\n"
+                f"Disp30: {env.last_recent_displacement:.3f}\n"
+                f"Gate30: {env.displacement_gate_ref:.3f}"
             )
 
+            # 刷新画布
             fig.canvas.draw()
             fig.canvas.flush_events()
 
+            # 终端打印
             print(
-                f"{step_idx + 1:<8} | {average_deg:<10.2f} | {first_link_deg:<10.2f} | {reward:<10.4f} | "
+                f"{i + 1:<10} | {centroid_x:<12.4f} | {centroid_y:<12.4f} | {total_reward:<12.4f} | "
                 f"{env.last_pressure_reward:<10.4f} | {env.last_direction_penalty:<10.4f} | "
-                f"{env.last_recent_displacement:<10.4f} | {env.last_displacement_scale:<8.3f}"
+                f"{env.last_recent_displacement:<10.4f}"
             )
 
+            # 检查窗口是否被用户关闭
             if not plt.fignum_exists(fig.number):
+                print("\nWindow closed. Stop simulation.")
                 break
 
             if done:
                 obs = env.reset()
                 state = policy.get_initial_state()
 
+            # 稍微暂停以控制速度
             if args.speed > 0:
                 plt.pause(args.speed)
+
     except KeyboardInterrupt:
-        print("\nVisualization interrupted.")
-    finally:
-        agent.stop()
-        ray.shutdown()
+        print("\nVisualization interrupted by user.")
+
+    print("-" * 110)
+    print("Simulation finished. Close the window to exit.")
 
     plt.ioff()
     plt.show()
+
+    agent.stop()
+    ray.shutdown()
 
 
 if __name__ == "__main__":
