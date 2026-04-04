@@ -63,6 +63,10 @@ trajp=[]
 d = torch.device("cpu")
 dtype = torch.double
 
+def compute_true_centroid(xy_positions):
+    xy_positions = np.asarray(xy_positions, dtype=np.float64)
+    return np.mean(xy_positions, axis=0)
+
 
 
 
@@ -151,7 +155,7 @@ class swimmer_gym(gym.Env):
             Yp[i]=self.Xfirst[1]+i/N*math.sin(self.state[2])
             
         self.XY_positions=np.concatenate(((Xp).reshape(-1,1),(Yp).reshape(-1,1)),axis=1)            
-        true_centroid = self._compute_true_centroid(self.XY_positions)
+        true_centroid = compute_true_centroid(self.XY_positions)
         self.state[0] = true_centroid[0]
         self.state[1] = true_centroid[1]
         self.X = true_centroid[0]
@@ -182,12 +186,6 @@ class swimmer_gym(gym.Env):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
-    def _compute_true_centroid(self, xy_positions=None):
-        if xy_positions is None:
-            xy_positions = self.XY_positions
-        xy_positions = np.asarray(xy_positions, dtype=np.float64)
-        return np.mean(xy_positions, axis=0)
- 
     def step(self,action):
 #         if self.it==0:
 #             self.state=np.loadtxt('state.pt', delimiter=',')
@@ -261,7 +259,7 @@ class swimmer_gym(gym.Env):
     #             print(self.state_n,actionx)
         self.state_n=staten.copy()
         self.XY_positions=np.concatenate((np.array(Xpositions).reshape(-1,1),np.array(Ypositions).reshape(-1,1)),axis=1)
-        true_centroid = self._compute_true_centroid(self.XY_positions)
+        true_centroid = compute_true_centroid(self.XY_positions)
         self.state_n[0] = true_centroid[0]
         self.state_n[1] = true_centroid[1]
 #         self.con_next=self.get_concentraion(XY_positions)

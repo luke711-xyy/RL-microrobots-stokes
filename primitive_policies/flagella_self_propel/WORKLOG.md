@@ -341,3 +341,25 @@ Recommended entry format for future rounds:
   - if the same error still appears on the user's training machine after this patch, the most likely cause is that the training run is still using another checkout or an older copy of `swimmer.py`
 - Next step:
   - restart the training job from the same checkout and confirm the environment now builds without the centroid-helper exception
+
+---
+
+## Entry 015
+
+- Time: 2026-04-04
+- Goal: fix a macOS training crash reporting `AttributeError: 'numpy.ndarray' object has no attribute 'XY_positions'`
+- Key findings:
+  - that failure indicates `_compute_true_centroid` was being invoked through a path where a NumPy array was ending up in the implicit `self` slot
+  - keeping true-centroid computation as an instance method leaves room for binding ambiguity if another checkout or call path references it unbound
+  - the centroid computation itself is pure and only depends on an explicit point array, so it is safer as a module-level helper
+- Files touched:
+  - `primitive_policies/flagella_self_propel/swimmer.py`
+  - `primitive_policies/flagella_self_propel/WORKLOG.md`
+- Actual changes:
+  - replaced the instance helper with a module-level `compute_true_centroid(xy_positions)` function
+  - updated both centroid call sites in `swimmer.py` to use the module-level helper directly
+  - re-ran `py_compile` on `swimmer.py` and `train.py`
+- Open questions:
+  - if the same attribute error still appears on the Mac after this patch, the machine is almost certainly still running an older copy of `swimmer.py`
+- Next step:
+  - pull the latest branch on the Mac checkout and rerun training from that exact working tree
