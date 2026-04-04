@@ -198,7 +198,7 @@ def get_config():
     config["max_seq_len"] = 20
 
     # 环境与训练关键参数
-    config["horizon"] = 1000
+    config["horizon"] = 3000
     config["gamma"] = 0.9999
     config["lr"] = 0.0003
     config["evaluation_duration"] = 10000000
@@ -279,8 +279,6 @@ def main():
     trace, = ax.plot([], [], "-", lw=1, color="crimson", alpha=0.5, label="Trace")
     # 平均朝向辅助线 (绿色虚线)
     avg_line, = ax.plot([], [], "--", lw=2, color="green", alpha=0.8, label="Average Heading")
-    # 首杆朝向辅助线 (橙色实线)
-    head_line, = ax.plot([], [], "-", lw=2, color="darkorange", alpha=0.9, label="Head Heading")
     # 质心点
     centroid_dot, = ax.plot([], [], "o", color="black", markersize=5, label="Centroid")
     # 文字信息
@@ -309,7 +307,7 @@ def main():
     print("-" * 110)
     print(
         f"{'Step':<10} | {'X Coord':<12} | {'Y Coord':<12} | {'Reward':<12} | "
-        f"{'P_rwd':<10} | {'Dir_pen':<10} | {'Disp30':<10}"
+        f"{'P_rwd':<10} | {'Dir_pen':<10} | {'Disp100':<10}"
     )
     print("-" * 110)
 
@@ -318,7 +316,6 @@ def main():
     current_x = robot_shape[:, 0]
     current_y = robot_shape[:, 1]
     centroid_x, centroid_y = compute_true_centroid(robot_shape)
-    first_link_heading = float(env.state[2])
     average_heading = compute_average_heading(env.state)
     history_x.append(centroid_x)
     history_y.append(centroid_y)
@@ -330,10 +327,6 @@ def main():
         [centroid_x, centroid_x + line_len * np.cos(average_heading)],
         [centroid_y, centroid_y + line_len * np.sin(average_heading)],
     )
-    head_line.set_data(
-        [centroid_x, centroid_x + line_len * np.cos(first_link_heading)],
-        [centroid_y, centroid_y + line_len * np.sin(first_link_heading)],
-    )
     ax.set_xlim(centroid_x - args.view_range, centroid_x + args.view_range)
     ax.set_ylim(centroid_y - args.view_range, centroid_y + args.view_range)
     info_text.set_text(
@@ -343,8 +336,8 @@ def main():
         f"Reward: 0.00\n"
         f"P_rwd: 0.000\n"
         f"Dir_pen: 0.000\n"
-        f"Disp30: 0.000\n"
-        f"Gate30: {env.displacement_gate_ref:.3f}"
+        f"Disp100: 0.000\n"
+        f"Gate100: {env.displacement_gate_ref:.3f}"
     )
     fig.canvas.draw()
     fig.canvas.flush_events()
@@ -379,7 +372,6 @@ def main():
             current_y = robot_shape[:, 1]
 
             centroid_x, centroid_y = compute_true_centroid(robot_shape)
-            first_link_heading = float(env.state[2])
             average_heading = compute_average_heading(env.state)
 
             # 记录轨迹 (取质心)
@@ -404,11 +396,6 @@ def main():
                 [centroid_x, centroid_x + line_len * np.cos(average_heading)],
                 [centroid_y, centroid_y + line_len * np.sin(average_heading)],
             )
-            head_line.set_data(
-                [centroid_x, centroid_x + line_len * np.cos(first_link_heading)],
-                [centroid_y, centroid_y + line_len * np.sin(first_link_heading)],
-            )
-
             # 动态调整相机视野 (Camera Follow)
             center_x = np.mean(current_x)
             center_y = np.mean(current_y)
@@ -424,8 +411,8 @@ def main():
                 f"Reward: {total_reward:.2f}\n"
                 f"P_rwd: {env.last_pressure_reward:.3f}\n"
                 f"Dir_pen: {env.last_direction_penalty:.3f}\n"
-                f"Disp30: {env.last_recent_displacement:.3f}\n"
-                f"Gate30: {env.displacement_gate_ref:.3f}"
+                f"Disp100: {env.last_recent_displacement:.3f}\n"
+                f"Gate100: {env.displacement_gate_ref:.3f}"
             )
 
             # 刷新画布

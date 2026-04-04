@@ -159,7 +159,7 @@ class swimmer_gym(gym.Env):
         self.pressure_index=1
         self.order=0
         self.escape_count=0
-        self.centroid_history = deque(maxlen=61)
+        self.centroid_history = deque(maxlen=201)
         self.episode_count = 0
         self.ep_step = 0
         self.last_pressure_reward = 0.0
@@ -182,7 +182,9 @@ class swimmer_gym(gym.Env):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
-    def _compute_true_centroid(self, xy_positions):
+    def _compute_true_centroid(self, xy_positions=None):
+        if xy_positions is None:
+            xy_positions = self.XY_positions
         xy_positions = np.asarray(xy_positions, dtype=np.float64)
         return np.mean(xy_positions, axis=0)
  
@@ -288,12 +290,12 @@ class swimmer_gym(gym.Env):
         self.last_displacement_scale = 0.0
         self.last_recent_displacement = 0.0
         self.last_old_displacement = 0.0
-        if len(self.centroid_history) >= 61:
+        if len(self.centroid_history) >= 201:
             pos_current = self.centroid_history[-1]
-            pos_30ago = self.centroid_history[-31]
-            pos_60ago = self.centroid_history[0]
-            recent_vec = pos_current - pos_30ago
-            old_vec = pos_30ago - pos_60ago
+            pos_100ago = self.centroid_history[-101]
+            pos_200ago = self.centroid_history[0]
+            recent_vec = pos_current - pos_100ago
+            old_vec = pos_100ago - pos_200ago
             recent_norm = np.linalg.norm(recent_vec)
             old_norm = np.linalg.norm(old_vec)
             self.last_recent_displacement = recent_norm
@@ -310,9 +312,9 @@ class swimmer_gym(gym.Env):
         self.ep_step += 1
         if self.ep_step % 200 == 0:
             print(f"  [Step {self.ep_step:>4d}] Centroid: ({self.state_n[0]:.4f}, {self.state_n[1]:.4f}) | "
-                  f"Dir_prev30: {self.last_old_dir_angle:>7.1f} -> Dir_last30: {self.last_recent_dir_angle:>7.1f} | "
-                  f"P_rwd: {self.last_pressure_reward:>8.4f}, Disp30: {self.last_recent_displacement:>7.4f}, "
-                  f"Gate30: {self.displacement_gate_ref:>7.4f}, "
+                  f"Dir_prev100: {self.last_old_dir_angle:>7.1f} -> Dir_last100: {self.last_recent_dir_angle:>7.1f} | "
+                  f"P_rwd: {self.last_pressure_reward:>8.4f}, Disp100: {self.last_recent_displacement:>7.4f}, "
+                  f"Gate100: {self.displacement_gate_ref:>7.4f}, "
                   f"Dir_scale: {self.last_displacement_scale:.3f}, Dir_pen: {self.last_direction_penalty:>8.4f}")
 
         self.Xfirst+=x_first_delta

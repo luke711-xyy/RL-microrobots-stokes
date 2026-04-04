@@ -52,7 +52,7 @@ config["num_rollout_workers"]=0
 config["framework"]= "torch"
 config['gamma']=0.9999
 config['lr']=0.0003
-config['horizon']=1000
+config['horizon']=3000
 config["evaluation_duration"]= 10000000
 
 config['lr_schedule'] = None

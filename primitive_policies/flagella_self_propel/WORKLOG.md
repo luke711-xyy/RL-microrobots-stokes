@@ -292,3 +292,52 @@ Recommended entry format for future rounds:
   - none in the centroid definition itself; if any downstream scripts assumed the old drifting translational state, they should now be rechecked against the corrected definition
 - Next step:
   - rerun training visualization and confirm that the centroid marker stays locked to the swimmer body while the reward direction window now follows the same geometric center
+
+---
+
+## Entry 013
+
+- Time: 2026-04-04
+- Goal: lengthen the direction-comparison windows to 100 steps each, extend the training episode horizon to 3000, and simplify the visualizer by removing the orange head-heading line
+- Key findings:
+  - the direction penalty windowing is localized to `centroid_history` length and two index lookups in `swimmer.py`
+  - the effective episode length in this branch is controlled by RLlib `horizon`, because the environment itself stays reset-free and does not set `done=True` in normal rollout
+  - the orange line in the visualizer is purely a rendering overlay and can be removed without affecting inference or reward logic
+- Files touched:
+  - `primitive_policies/flagella_self_propel/swimmer.py`
+  - `primitive_policies/flagella_self_propel/train.py`
+  - `primitive_policies/flagella_self_propel/visualize_self_propel.py`
+  - `primitive_policies/flagella_self_propel/CODE_INDEX.md`
+  - `primitive_policies/flagella_self_propel/WORKLOG.md`
+- Actual changes:
+  - changed the true-centroid history window from 61 samples to 201 samples
+  - changed the direction comparison from 30-step windows to 100-step windows
+  - updated the 200-step log labels from `Disp30/Gate30` to `Disp100/Gate100`
+  - changed PPO `horizon` from 1000 to 3000 in both training and visualizer restore config
+  - removed the orange head-heading line from the visualizer and kept only the average-heading cue
+- Open questions:
+  - with a 3000-step horizon, per-episode reward logs will become less frequent; if that makes debugging slower, you may later want an additional shorter-interval custom callback print
+- Next step:
+  - rerun a short training job and verify that resets now happen every 3000 steps and that the direction penalty reacts on the slower 100-step window as intended
+
+---
+
+## Entry 014
+
+- Time: 2026-04-04
+- Goal: fix a training-time crash reporting `_compute_true_centroid() missing 1 required positional argument: 'xy_positions'`
+- Key findings:
+  - the centroid helper is only used to map rendered swimmer geometry back to a single consistent centroid state
+  - making the helper tolerant to a missing explicit `xy_positions` argument is safe because the environment already stores the latest geometry in `self.XY_positions`
+  - the failure mode is consistent with a call path where the helper gets invoked without an explicit array argument during training-time environment construction or reuse
+- Files touched:
+  - `primitive_policies/flagella_self_propel/swimmer.py`
+  - `primitive_policies/flagella_self_propel/WORKLOG.md`
+- Actual changes:
+  - changed `_compute_true_centroid` to accept an optional `xy_positions=None`
+  - made the helper fall back to `self.XY_positions` when no explicit point array is supplied
+  - re-ran `py_compile` on `swimmer.py`, `train.py`, and `visualize_self_propel.py`
+- Open questions:
+  - if the same error still appears on the user's training machine after this patch, the most likely cause is that the training run is still using another checkout or an older copy of `swimmer.py`
+- Next step:
+  - restart the training job from the same checkout and confirm the environment now builds without the centroid-helper exception
