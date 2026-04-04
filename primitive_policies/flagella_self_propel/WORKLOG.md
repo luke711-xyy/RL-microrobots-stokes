@@ -266,3 +266,29 @@ Recommended entry format for future rounds:
   - if the solver itself is extremely slow on the target Mac, the window may still feel sluggish during long compute bursts; that would be a physics-step runtime issue rather than a pure GUI initialization issue
 - Next step:
   - rerun the visualizer on the Mac and confirm that the initial frame appears immediately and the window can now be closed normally
+
+---
+
+## Entry 012
+
+- Time: 2026-04-04
+- Goal: unify all centroid-related logic so reward, logs, trajectory output, and visualization use the swimmer's true geometric centroid
+- Key findings:
+  - the previous environment state stored a translational state that drifted away from the centroid implied by `XY_positions`
+  - the hydrodynamic geometry is reconstructed from `x_first`, while the old visualizer and reward history trusted `state[0:2]`, so two different centroid definitions were mixed together
+  - in this branch, `state[0:2]` is not used to rebuild geometry in the solver, so it is safe to overwrite it with the actual geometric centroid after each physics step
+- Files touched:
+  - `primitive_policies/flagella_self_propel/swimmer.py`
+  - `primitive_policies/flagella_self_propel/visualize_self_propel.py`
+  - `primitive_policies/flagella_self_propel/CODE_INDEX.md`
+  - `primitive_policies/flagella_self_propel/WORKLOG.md`
+- Actual changes:
+  - added a centroid helper in `swimmer.py` based on the mean of `XY_positions`
+  - updated `state[0:2]` after each RK step to store the true geometric centroid
+  - made centroid-history reward logic inherit that true centroid definition automatically
+  - changed the visualizer's trace and centroid marker to compute from the rendered geometry directly
+  - updated the index documentation so centroid fields now explicitly mean true geometric centroid
+- Open questions:
+  - none in the centroid definition itself; if any downstream scripts assumed the old drifting translational state, they should now be rechecked against the corrected definition
+- Next step:
+  - rerun training visualization and confirm that the centroid marker stays locked to the swimmer body while the reward direction window now follows the same geometric center

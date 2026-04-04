@@ -164,7 +164,7 @@ Purpose:
 State layout:
 
 - `self.state` has shape `(N+2,)`
-- semantic layout: `[centroid_x, centroid_y, first_link_global_angle, hinge_angles...]`
+- semantic layout: `[true_centroid_x, true_centroid_y, first_link_global_angle, hinge_angles...]`
 - returned observation is `self.state[3:]`, not the full state
 
 Action semantics:
@@ -176,7 +176,7 @@ Action semantics:
 Reward terms:
 
 - pressure reward: `pressure_diff.item() * 12` at [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):269-270
-- direction penalty: compares two equal 30-step centroid-direction windows, `t-60 -> t-30` versus `t-30 -> t`, and gates the penalty by the recent 30-step net displacement instead of pressure magnitude at [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):272-295
+- direction penalty: compares two equal 30-step true-centroid direction windows, `t-60 -> t-30` versus `t-30 -> t`, and gates the penalty by the recent 30-step net displacement instead of pressure magnitude at [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):272-295
 - current displacement gate: `min(recent_norm / self.displacement_gate_ref, 1.0)` with `self.displacement_gate_ref = 0.05` at [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):163-164 and [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):294
 - every 200 steps, debug logging now prints both `Disp30` and `Gate30` so the displacement threshold can be tuned from training logs
 - total reward accumulated into `self.reward` at [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):305
@@ -268,8 +268,8 @@ Important details:
 
 Each row:
 
-- centroid `X`
-- centroid `Y`
+- true geometric centroid `X`
+- true geometric centroid `Y`
 - first-link global angle
 - all hinge angles
 
@@ -281,8 +281,8 @@ Source:
 
 Each row:
 
-- centroid `X`
-- centroid `Y`
+- true geometric centroid `X`
+- true geometric centroid `Y`
 - back-end point `X` (`self.Xfirst[0]`)
 - back-end point `Y` (`self.Xfirst[1]`)
 
@@ -329,7 +329,7 @@ Source:
 - `STOKES_NUM_THREADS` is set in `train.py` before importing `swimmer.py`, specifically so `calculate_v.py` picks it up during import.
 - policy output path is timestamped `policy_<timestamp>`, not the older fixed `policy/` layout used elsewhere.
 - `traj`, `traj2`, and `trajp` are flushed only every 4000 steps. If training stops early, in-memory data since the last flush will not be written automatically.
-- the direction-stability penalty now starts only after 61 centroid samples are available, because it compares two equal 30-step windows.
+- the direction-stability penalty now starts only after 61 true-centroid samples are available, because it compares two equal 30-step windows.
 - `_get_obs()` still references `self.reach_targets`, but this attribute is not initialized anywhere in this branch's `__init__`. This method looks stale and should not be trusted without inspection. See [`swimmer.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/swimmer.py):451-452.
 - there are many commented blocks from earlier experiments. Prefer tracing active logic from `train.py -> swimmer.py.step() -> calculate_v.py.RK()`.
 

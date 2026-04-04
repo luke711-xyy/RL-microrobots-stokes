@@ -176,6 +176,10 @@ def compute_average_heading(state_array):
     return angle_sum / (len(state_array) - 2)
 
 
+def compute_true_centroid(robot_shape):
+    return np.mean(robot_shape[:, 0]), np.mean(robot_shape[:, 1])
+
+
 # ================= 2. 配置函数 (需与 train.py 一致) =================
 def get_config():
     """
@@ -313,8 +317,7 @@ def main():
     robot_shape = env.XY_positions.copy()
     current_x = robot_shape[:, 0]
     current_y = robot_shape[:, 1]
-    centroid_x = float(env.state[0])
-    centroid_y = float(env.state[1])
+    centroid_x, centroid_y = compute_true_centroid(robot_shape)
     first_link_heading = float(env.state[2])
     average_heading = compute_average_heading(env.state)
     history_x.append(centroid_x)
@@ -375,8 +378,7 @@ def main():
             current_x = robot_shape[:, 0]
             current_y = robot_shape[:, 1]
 
-            centroid_x = float(env.state[0])
-            centroid_y = float(env.state[1])
+            centroid_x, centroid_y = compute_true_centroid(robot_shape)
             first_link_heading = float(env.state[2])
             average_heading = compute_average_heading(env.state)
 
