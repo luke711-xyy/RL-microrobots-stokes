@@ -67,8 +67,11 @@ if str(BASE_DIR) not in sys.path:
 
 import matplotlib
 
-# 强制使用 TkAgg 后端，确保在终端运行时能弹出窗口
-matplotlib.use("TkAgg")
+# macOS 上优先使用原生后端，减少空白窗口和无响应问题
+if sys.platform == "darwin":
+    matplotlib.use("MacOSX")
+else:
+    matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 import numpy as np
 import ray
@@ -288,6 +291,7 @@ def main():
     )
 
     plt.legend(loc="upper right")
+    plt.show(block=False)
 
     # --- 初始化 LSTM 状态 ---
     policy = agent.get_policy()
@@ -305,9 +309,54 @@ def main():
     )
     print("-" * 110)
 
+    # 先显示初始几何，避免首帧空白。
+    robot_shape = env.XY_positions.copy()
+    current_x = robot_shape[:, 0]
+    current_y = robot_shape[:, 1]
+    centroid_x = float(env.state[0])
+    centroid_y = float(env.state[1])
+    first_link_heading = float(env.state[2])
+    average_heading = compute_average_heading(env.state)
+    history_x.append(centroid_x)
+    history_y.append(centroid_y)
+    line.set_data(current_x, current_y)
+    trace.set_data(history_x, history_y)
+    centroid_dot.set_data([centroid_x], [centroid_y])
+    line_len = 2.0
+    avg_line.set_data(
+        [centroid_x, centroid_x + line_len * np.cos(average_heading)],
+        [centroid_y, centroid_y + line_len * np.sin(average_heading)],
+    )
+    head_line.set_data(
+        [centroid_x, centroid_x + line_len * np.cos(first_link_heading)],
+        [centroid_y, centroid_y + line_len * np.sin(first_link_heading)],
+    )
+    ax.set_xlim(centroid_x - args.view_range, centroid_x + args.view_range)
+    ax.set_ylim(centroid_y - args.view_range, centroid_y + args.view_range)
+    info_text.set_text(
+        f"Step: 0\n"
+        f"X: {centroid_x:.2f}\n"
+        f"Y: {centroid_y:.2f}\n"
+        f"Reward: 0.00\n"
+        f"P_rwd: 0.000\n"
+        f"Dir_pen: 0.000\n"
+        f"Disp30: 0.000\n"
+        f"Gate30: {env.displacement_gate_ref:.3f}"
+    )
+    fig.canvas.draw()
+    fig.canvas.flush_events()
+    plt.pause(0.05)
+
     # ================= 5. 实时模拟循环 =================
     try:
         for i in range(args.steps):
+            if not plt.fignum_exists(fig.number):
+                print("\nWindow closed. Stop simulation.")
+                break
+
+            # 先处理一次 GUI 事件，避免窗口长时间无响应。
+            plt.pause(0.001)
+
             # (1) 计算动作
             action_output = agent.compute_single_action(
                 observation=obs,
@@ -389,10 +438,6 @@ def main():
             )
 
             # 检查窗口是否被用户关闭
-            if not plt.fignum_exists(fig.number):
-                print("\nWindow closed. Stop simulation.")
-                break
-
             if done:
                 obs = env.reset()
                 state = policy.get_initial_state()

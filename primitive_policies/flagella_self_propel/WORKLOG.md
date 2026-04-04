@@ -244,3 +244,25 @@ Recommended entry format for future rounds:
   - none in code logic; remaining runtime compatibility still depends on the target machine having `ray`, `rllib`, `matplotlib`, and `torch`
 - Next step:
   - verify `--help` and a real checkpoint restore on the target machine, then keep this order as the baseline for future visualizer edits
+
+---
+
+## Entry 011
+
+- Time: 2026-04-04
+- Goal: address the macOS symptom where the visualization window opens blank and does not respond until the terminal is killed
+- Key findings:
+  - the previous script only drew the first frame after entering the rollout loop, so if the first policy step or environment step was slow, the user would see a blank window with no visible content
+  - on macOS, `TkAgg` is more prone to awkward event-loop behavior than the native `MacOSX` backend
+  - explicitly drawing an initial frame and pumping GUI events before heavy rollout work improves both first-frame visibility and close responsiveness
+- Files touched:
+  - `primitive_policies/flagella_self_propel/visualize_self_propel.py`
+  - `primitive_policies/flagella_self_propel/WORKLOG.md`
+- Actual changes:
+  - switched macOS to prefer the `MacOSX` matplotlib backend while keeping `TkAgg` for other platforms
+  - added an initial geometry render before the simulation loop
+  - added a small GUI event pump at the start of each iteration so close events are handled more promptly
+- Open questions:
+  - if the solver itself is extremely slow on the target Mac, the window may still feel sluggish during long compute bursts; that would be a physics-step runtime issue rather than a pure GUI initialization issue
+- Next step:
+  - rerun the visualizer on the Mac and confirm that the initial frame appears immediately and the window can now be closed normally
