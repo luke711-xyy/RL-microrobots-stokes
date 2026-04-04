@@ -363,3 +363,34 @@ Recommended entry format for future rounds:
   - if the same attribute error still appears on the Mac after this patch, the machine is almost certainly still running an older copy of `swimmer.py`
 - Next step:
   - pull the latest branch on the Mac checkout and rerun training from that exact working tree
+
+---
+
+## Entry 016
+
+- Time: 2026-04-04
+- Goal: retune PPO sampling and sequence settings so the 3000-step episode length and 100-step direction window are supported by longer-horizon training updates
+- Key findings:
+  - keeping `horizon=3000` while leaving `train_batch_size=1000` makes each PPO update too short relative to one full episode, so the optimizer sees fragmented long-horizon behavior
+  - a zero entropy bonus encourages early collapse into a narrow gait family before the policy reliably discovers stronger propulsion cycles
+  - `max_seq_len=20` is short relative to the new 100-step direction signal and limits how much temporal context the LSTM can use per truncated sequence
+- Files touched:
+  - `primitive_policies/flagella_self_propel/train.py`
+  - `primitive_policies/flagella_self_propel/CODE_INDEX.md`
+  - `primitive_policies/flagella_self_propel/WORKLOG.md`
+- Actual changes:
+  - set `batch_mode` from implicit default to `complete_episodes`
+  - set `rollout_fragment_length` from implicit default to `3000`
+  - changed `lambda_` from `0.95` to `0.98`
+  - changed `sgd_minibatch_size` from `64` to `256`
+  - changed `train_batch_size` from `1000` to `6000`
+  - changed `num_sgd_iter` from `30` to `15`
+  - changed `entropy_coeff` from `0.0` to `0.001`
+  - changed `max_seq_len` from `20` to `100`
+  - changed `min_sample_timesteps_per_iteration` from `1000` to `6000`
+  - updated the maintained code index so the PPO parameter table matches the new training defaults
+- Open questions:
+  - if training becomes noticeably noisier, the next likely parameters to tune are `train_batch_size` upward to `9000-12000` or `lr` downward to `1e-4`
+  - if memory use grows too much with `max_seq_len=100`, a fallback of `64` is the first safe rollback point
+- Next step:
+  - run a short training job and compare whether early pressure reward rises faster and whether the policy escapes the previous narrow turning gait more often

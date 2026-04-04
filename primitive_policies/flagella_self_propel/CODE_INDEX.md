@@ -80,15 +80,20 @@ Important: the `.pt` files are not optional cached artifacts. They are import-ti
 | --- | --- | --- |
 | Ray CPUs | CLI arg `--num_cpus`, default `5` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):7, [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):31 |
 | PyTorch threads | CLI arg `--num_threads`, default `5` via env var | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):8-10 |
+| `batch_mode` | `complete_episodes` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):50 |
+| `rollout_fragment_length` | `3000` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):51 |
 | `gamma` | `0.9999` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):53 |
 | `lr` | `0.0003` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):54 |
 | `horizon` | `3000` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):55 |
-| `train_batch_size` | `1000` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):64 |
-| `sgd_minibatch_size` | `64` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):63 |
-| `num_sgd_iter` | `30` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):65 |
+| `lambda_` | `0.98` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):60 |
+| `train_batch_size` | `6000` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):64 |
+| `sgd_minibatch_size` | `256` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):63 |
+| `num_sgd_iter` | `15` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):65 |
+| `entropy_coeff` | `0.001` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):68 |
 | `clip_param` | `0.1` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):70 |
 | `use_lstm` | `True` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):89 |
-| `max_seq_len` | `20` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):90 |
+| `max_seq_len` | `100` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):90 |
+| `min_sample_timesteps_per_iteration` | `6000` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):94 |
 | training iterations | `2000` | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):153 |
 | checkpoint cadence | every 10 iterations | [`train.py`](/F:/fyp/STOKES/RL_microrobots-master331/primitive_policies/flagella_self_propel/train.py):156-169 |
 
