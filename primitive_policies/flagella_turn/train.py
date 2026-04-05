@@ -18,6 +18,7 @@ os.environ["STOKES_NUM_THREADS"] = str(args.num_threads)
 
 import gym, ray
 #from gym_particle.envs.swimmer import swimmer_gym
+import swimmer as swimmer_module
 from swimmer import swimmer_gym
 from ray.rllib.env.base_env import BaseEnv
 from ray.rllib.algorithms.ppo import PPO
@@ -36,6 +37,7 @@ print(f"Policy save dir: {cwd}")
 print(f"Turn direction: {args.turn_direction}")
 print(f"Ray CPUs: {args.num_cpus}, PyTorch threads: {args.num_threads}")
 print(os.getcwd())
+os.makedirs(cwd, exist_ok=True)
 ray.init(ignore_reinit_error=True, num_cpus=args.num_cpus)
 # trainer = ppo.PPOTrainer(env=swimmer_gym, config={
 #     "env_config": {},  # config to pass to env class
@@ -104,6 +106,88 @@ config["max_seq_len"]= 100
 
 config["min_sample_timesteps_per_iteration"]= 6000
 
+
+def write_training_run_markdown(run_dir, cli_args, trainer_config, env_preview):
+    tracked_config_keys = [
+        "framework",
+        "num_gpus",
+        "num_workers",
+        "num_rollout_workers",
+        "batch_mode",
+        "rollout_fragment_length",
+        "gamma",
+        "lr",
+        "horizon",
+        "use_critic",
+        "use_gae",
+        "lambda_",
+        "kl_coeff",
+        "sgd_minibatch_size",
+        "train_batch_size",
+        "num_sgd_iter",
+        "shuffle_sequences",
+        "vf_loss_coeff",
+        "entropy_coeff",
+        "clip_param",
+        "vf_clip_param",
+        "grad_clip",
+        "kl_target",
+        "use_lstm",
+        "max_seq_len",
+        "min_sample_timesteps_per_iteration",
+        "evaluation_interval",
+        "evaluation_duration",
+    ]
+
+    lines = [
+        "# Training Run Parameters",
+        "",
+        f"- Generated at: `{datetime.now().isoformat(timespec='seconds')}`",
+        f"- Policy directory: `{run_dir}`",
+        "",
+        "## CLI Parameters",
+        "",
+        f"- `num_cpus`: `{cli_args.num_cpus}`",
+        f"- `num_threads`: `{cli_args.num_threads}`",
+        f"- `turn_direction`: `{cli_args.turn_direction}`",
+        "",
+        "## PPO / RLlib Parameters",
+        "",
+    ]
+
+    for key in tracked_config_keys:
+        lines.append(f"- `{key}`: `{trainer_config[key]}`")
+
+    lines.extend(
+        [
+            "",
+            "## Environment Parameters",
+            "",
+            f"- `turn_direction`: `{env_preview.turn_direction}`",
+            f"- `target_turn_sign`: `{env_preview.target_turn_sign}`",
+            f"- `N`: `{swimmer_module.N}`",
+            f"- `DT`: `{swimmer_module.DT}`",
+            f"- `ACTION_LOW`: `{swimmer_module.ACTION_LOW}`",
+            f"- `ACTION_HIGH`: `{swimmer_module.ACTION_HIGH}`",
+            f"- `initial_centroid_x`: `{env_preview.X_ini}`",
+            f"- `initial_centroid_y`: `{env_preview.Y_ini}`",
+            f"- `betamax`: `{env_preview.betamax}`",
+            f"- `betamin`: `{env_preview.betamin}`",
+            f"- `centroid_history_window`: `{env_preview.centroid_history.maxlen}`",
+            f"- `displacement_gate_ref`: `{env_preview.displacement_gate_ref}`",
+            f"- `pressure_reward_coef`: `{swimmer_module.PRESSURE_REWARD_COEF}`",
+            f"- `turn_reward_coef`: `{swimmer_module.TURN_REWARD_COEF}`",
+            f"- `turn_angle_definition`: `signed angle between old and recent centroid displacement windows`",
+            f"- `turn_window_steps`: `100 + 100`",
+            f"- `true_centroid_tracking`: `enabled`",
+            f"- `reset_behavior`: `reset-free`",
+        ]
+    )
+
+    output_path = os.path.join(run_dir, "TRAINING_PARAMS.md")
+    with open(output_path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write("\n".join(lines) + "\n")
+
 directory_path = os.getcwd()
 folder_name = path.basename(directory_path)
 
@@ -140,6 +224,8 @@ folder_name = path.basename(directory_path)
 #trainer = config.build()
 #trainer = PPO()
 #print(config.to_dict())   
+env_preview = swimmer_gym({"turn_direction": args.turn_direction})
+write_training_run_markdown(cwd, args, config, env_preview)
 env.__init__(env, {"turn_direction": args.turn_direction})
 #trainer.restore(cwd2)
 #trainer = config.build(env=env)
@@ -175,8 +261,7 @@ for i in range(2000):
     result = trainer.train()
     if i%10==0:
         path = os.path.join(cwd, str(i))
-        if os.path.isdir(path)<0:
-            os.mkdir(path)
+        os.makedirs(path, exist_ok=True)
         checkpoint = trainer.save(path)
 #     print(i)
 #     trainer.evaluate()
