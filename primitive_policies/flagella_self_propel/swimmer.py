@@ -282,8 +282,12 @@ class swimmer_gym(gym.Env):
 #             reward+=-N
 #         else:
 #         reward+=(((r)/N)*100)      
-        self.last_pressure_reward = pressure_diff.item() * PRESSURE_REWARD_COEF
-        reward += self.last_pressure_reward
+        pressure_value = pressure_diff.item()
+        pressure_active = not math.isclose(pressure_value, 0.0, abs_tol=1e-12)
+        self.last_pressure_reward = 0.0
+        if pressure_active:
+            self.last_pressure_reward = pressure_value * PRESSURE_REWARD_COEF
+            reward += self.last_pressure_reward
 
         self.centroid_history.append(np.array([self.state_n[0], self.state_n[1]]))
         self.last_direction_penalty = 0.0
@@ -303,7 +307,7 @@ class swimmer_gym(gym.Env):
             self.last_old_displacement = old_norm
             self.last_old_dir_angle = math.degrees(math.atan2(old_vec[1], old_vec[0]))
             self.last_recent_dir_angle = math.degrees(math.atan2(recent_vec[1], recent_vec[0]))
-            if recent_norm > 1e-8 and old_norm > 1e-8:
+            if pressure_active and recent_norm > 1e-8 and old_norm > 1e-8:
                 cos_angle = np.clip(np.dot(recent_vec, old_vec) / (recent_norm * old_norm), -1.0, 1.0)
                 self.last_angle_diff = math.acos(cos_angle)
                 self.last_displacement_scale = min(recent_norm / self.displacement_gate_ref, 1.0)
