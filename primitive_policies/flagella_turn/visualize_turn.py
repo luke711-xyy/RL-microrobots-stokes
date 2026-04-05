@@ -9,13 +9,21 @@ BASE_DIR = Path(__file__).resolve().parent
 
 # ================= 3. 参数解析 =================
 def parse_args():
-    parser = argparse.ArgumentParser(description="Micro-Robot Real-Time Visualizer")
+    parser = argparse.ArgumentParser(description="Micro-Robot Turn Policy Visualizer")
+
+    parser.add_argument(
+        "--turn_direction",
+        type=str,
+        required=True,
+        choices=["cw", "ccw"],
+        help="Target turning direction of the checkpoint being visualized.",
+    )
 
     parser.add_argument(
         "--checkpoint",
         type=str,
         default=None,
-        help="Checkpoint path. If omitted, auto-detect the latest checkpoint under local policy_* folders.",
+        help="Checkpoint path. If omitted, auto-detect the latest checkpoint under local policy_<dir>_* folders.",
     )
 
     parser.add_argument(
@@ -100,12 +108,13 @@ def checkpoint_sort_key(path):
     return (order, str(path))
 
 
-def find_latest_checkpoint(base_dir=None):
+def find_latest_checkpoint(turn_direction, base_dir=None):
     base_dir = Path(base_dir or BASE_DIR)
     if not base_dir.exists():
         return None
 
-    policy_roots = [path for path in base_dir.iterdir() if path.is_dir() and path.name.startswith("policy_")]
+    policy_prefix = f"policy_{turn_direction}_"
+    policy_roots = [path for path in base_dir.iterdir() if path.is_dir() and path.name.startswith(policy_prefix)]
     if not policy_roots:
         return None
 
@@ -181,7 +190,7 @@ def compute_true_centroid(robot_shape):
 
 
 # ================= 2. 配置函数 (需与 train.py 一致) =================
-def get_config():
+def get_config(turn_direction):
     """
     复制 train.py 中的关键配置，确保模型能正确加载。
     """
@@ -191,11 +200,14 @@ def get_config():
     config["num_gpus"] = 0
     config["num_workers"] = 0
     config["num_rollout_workers"] = 0
+    config["batch_mode"] = "complete_episodes"
+    config["rollout_fragment_length"] = 3000
     config["framework"] = "torch"
+    config["env_config"] = {"turn_direction": turn_direction}
 
     # 网络结构 (LSTM)
     config["use_lstm"] = True
-    config["max_seq_len"] = 20
+    config["max_seq_len"] = 100
 
     # 环境与训练关键参数
     config["horizon"] = 3000
@@ -205,14 +217,14 @@ def get_config():
     config["lr_schedule"] = None
     config["use_critic"] = True
     config["use_gae"] = True
-    config["lambda_"] = 0.95
+    config["lambda_"] = 0.98
     config["kl_coeff"] = 0.2
-    config["sgd_minibatch_size"] = 64
-    config["train_batch_size"] = 1000
-    config["num_sgd_iter"] = 30
+    config["sgd_minibatch_size"] = 256
+    config["train_batch_size"] = 6000
+    config["num_sgd_iter"] = 15
     config["shuffle_sequences"] = True
     config["vf_loss_coeff"] = 1.0
-    config["entropy_coeff"] = 0.0
+    config["entropy_coeff"] = 0.001
     config["entropy_coeff_schedule"] = None
     config["clip_param"] = 0.1
     config["vf_clip_param"] = 100000
@@ -220,7 +232,7 @@ def get_config():
     config["kl_target"] = 0.01
     config["evaluation_interval"] = 1000000
     config["evaluation_duration"] = 1
-    config["min_sample_timesteps_per_iteration"] = 1000
+    config["min_sample_timesteps_per_iteration"] = 6000
 
     # 必须传入环境类
     config["env"] = swimmer_gym
@@ -238,22 +250,23 @@ def main():
     ray.init(ignore_reinit_error=True, num_cpus=args.num_cpus, log_to_driver=False)
 
     # --- 实例化环境和 Agent ---
-    env = swimmer_gym({})
+    env = swimmer_gym({"turn_direction": args.turn_direction})
     obs = env.reset()
 
-    config = get_config()
+    config = get_config(args.turn_direction)
     agent = ppo.PPO(config=config, env=swimmer_gym)
 
     # --- 加载模型 (路径自动纠错 + 自动寻找最新 checkpoint) ---
     if args.checkpoint:
         cp_path = resolve_checkpoint(args.checkpoint)
     else:
-        cp_path = find_latest_checkpoint()
+        cp_path = find_latest_checkpoint(args.turn_direction)
         if cp_path is None:
             print("\n[Error] No checkpoint found. Run train.py first or pass --checkpoint.")
             sys.exit(1)
 
     print(f"Loading checkpoint: {cp_path}")
+    print(f"Turn direction: {args.turn_direction}")
     print(f"Ray CPUs: {args.num_cpus}, PyTorch threads: {args.num_threads}")
     try:
         agent.restore(str(cp_path))
@@ -268,7 +281,7 @@ def main():
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.set_aspect("equal")
     ax.grid(True, linestyle="--", alpha=0.5)
-    ax.set_title("Real-Time Simulation (Running...)")
+    ax.set_title(f"Turn Policy Visualization ({args.turn_direction.upper()})")
     ax.set_xlabel("X Position")
     ax.set_ylabel("Y Position")
 
@@ -307,7 +320,7 @@ def main():
     print("-" * 110)
     print(
         f"{'Step':<10} | {'X Coord':<12} | {'Y Coord':<12} | {'Reward':<12} | "
-        f"{'P_rwd':<10} | {'Dir_pen':<10} | {'Disp100':<10}"
+        f"{'P_rwd':<10} | {'Turn_rwd':<11} | {'TurnDeg100':<11} | {'Disp100':<10}"
     )
     print("-" * 110)
 
@@ -335,9 +348,11 @@ def main():
         f"Y: {centroid_y:.2f}\n"
         f"Reward: 0.00\n"
         f"P_rwd: 0.000\n"
-        f"Dir_pen: 0.000\n"
+        f"Turn_rwd: 0.000\n"
+        f"TurnDeg100: 0.00\n"
         f"Disp100: 0.000\n"
-        f"Gate100: {env.displacement_gate_ref:.3f}"
+        f"Gate100: {env.displacement_gate_ref:.3f}\n"
+        f"TargetDir: {env.turn_direction}"
     )
     fig.canvas.draw()
     fig.canvas.flush_events()
@@ -410,9 +425,11 @@ def main():
                 f"Y: {centroid_y:.2f}\n"
                 f"Reward: {total_reward:.2f}\n"
                 f"P_rwd: {env.last_pressure_reward:.3f}\n"
-                f"Dir_pen: {env.last_direction_penalty:.3f}\n"
+                f"Turn_rwd: {env.last_turn_reward:.3f}\n"
+                f"TurnDeg100: {env.last_signed_turn_deg:.2f}\n"
                 f"Disp100: {env.last_recent_displacement:.3f}\n"
-                f"Gate100: {env.displacement_gate_ref:.3f}"
+                f"Gate100: {env.displacement_gate_ref:.3f}\n"
+                f"TargetDir: {env.turn_direction}"
             )
 
             # 刷新画布
@@ -422,8 +439,8 @@ def main():
             # 终端打印
             print(
                 f"{i + 1:<10} | {centroid_x:<12.4f} | {centroid_y:<12.4f} | {total_reward:<12.4f} | "
-                f"{env.last_pressure_reward:<10.4f} | {env.last_direction_penalty:<10.4f} | "
-                f"{env.last_recent_displacement:<10.4f}"
+                f"{env.last_pressure_reward:<10.4f} | {env.last_turn_reward:<11.4f} | "
+                f"{env.last_signed_turn_deg:<11.2f} | {env.last_recent_displacement:<10.4f}"
             )
 
             # 检查窗口是否被用户关闭
