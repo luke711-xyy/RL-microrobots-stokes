@@ -28,6 +28,9 @@ COEF_EXCEED=-0.1
 DIST_EPSI_INLET=0.05 # need to prevent the particle from too close to the inlets.
 MAX_STEP=10000
 DT = 0.01
+PRESSURE_REWARD_COEF = 12.0
+DIRECTION_REWARD_BASE_COEF = -2.0
+DIRECTION_WINDOW_STEPS = 100
 
 ACTION_LOW = -1
 ACTION_HIGH = 1
@@ -279,7 +282,7 @@ class swimmer_gym(gym.Env):
 #             reward+=-N
 #         else:
 #         reward+=(((r)/N)*100)      
-        self.last_pressure_reward = pressure_diff.item()*12
+        self.last_pressure_reward = pressure_diff.item() * PRESSURE_REWARD_COEF
         reward += self.last_pressure_reward
 
         self.centroid_history.append(np.array([self.state_n[0], self.state_n[1]]))
@@ -304,7 +307,11 @@ class swimmer_gym(gym.Env):
                 cos_angle = np.clip(np.dot(recent_vec, old_vec) / (recent_norm * old_norm), -1.0, 1.0)
                 self.last_angle_diff = math.acos(cos_angle)
                 self.last_displacement_scale = min(recent_norm / self.displacement_gate_ref, 1.0)
-                self.last_direction_penalty = -2.0 * (self.last_angle_diff / math.pi) * self.last_displacement_scale
+                self.last_direction_penalty = (
+                    DIRECTION_REWARD_BASE_COEF
+                    * (self.last_angle_diff / math.pi)
+                    * self.last_displacement_scale
+                )
                 reward += self.last_direction_penalty
 
         self.ep_step += 1

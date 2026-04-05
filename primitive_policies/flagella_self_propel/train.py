@@ -1,6 +1,7 @@
 import os
 import argparse
 from datetime import datetime
+from pprint import pformat
 
 # Parse args BEFORE importing swimmer/calculate_v, so env var is set in time
 parser = argparse.ArgumentParser(description="Train flagella self-propel swimmer")
@@ -99,37 +100,23 @@ config["min_sample_timesteps_per_iteration"]= 6000
 
 
 def write_training_run_markdown(run_dir, cli_args, trainer_config, env_preview):
-    tracked_config_keys = [
-        "framework",
-        "num_gpus",
-        "num_workers",
-        "num_rollout_workers",
-        "batch_mode",
-        "rollout_fragment_length",
-        "gamma",
-        "lr",
-        "horizon",
-        "use_critic",
-        "use_gae",
-        "lambda_",
-        "kl_coeff",
-        "sgd_minibatch_size",
-        "train_batch_size",
-        "num_sgd_iter",
-        "shuffle_sequences",
-        "vf_loss_coeff",
-        "entropy_coeff",
-        "clip_param",
-        "vf_clip_param",
-        "grad_clip",
-        "kl_target",
-        "use_lstm",
-        "max_seq_len",
-        "min_sample_timesteps_per_iteration",
-        "evaluation_interval",
-        "evaluation_duration",
-    ]
-
+    env_params = {
+        "N": swimmer_module.N,
+        "DT": swimmer_module.DT,
+        "ACTION_LOW": swimmer_module.ACTION_LOW,
+        "ACTION_HIGH": swimmer_module.ACTION_HIGH,
+        "initial_centroid_x": env_preview.X_ini,
+        "initial_centroid_y": env_preview.Y_ini,
+        "betamax": env_preview.betamax,
+        "betamin": env_preview.betamin,
+        "centroid_history_window": env_preview.centroid_history.maxlen,
+        "displacement_gate_ref": env_preview.displacement_gate_ref,
+        "pressure_reward_coef": swimmer_module.PRESSURE_REWARD_COEF,
+        "direction_reward_base_coef": swimmer_module.DIRECTION_REWARD_BASE_COEF,
+        "direction_window_steps": swimmer_module.DIRECTION_WINDOW_STEPS,
+        "true_centroid_tracking": True,
+        "reset_behavior": "reset-free",
+    }
     lines = [
         "# Training Run Parameters",
         "",
@@ -143,31 +130,19 @@ def write_training_run_markdown(run_dir, cli_args, trainer_config, env_preview):
         "",
         "## PPO / RLlib Parameters",
         "",
+        "```python",
+        pformat(trainer_config, sort_dicts=True),
+        "```",
     ]
-
-    for key in tracked_config_keys:
-        lines.append(f"- `{key}`: `{trainer_config[key]}`")
 
     lines.extend(
         [
             "",
             "## Environment Parameters",
             "",
-            f"- `N`: `{swimmer_module.N}`",
-            f"- `DT`: `{swimmer_module.DT}`",
-            f"- `ACTION_LOW`: `{swimmer_module.ACTION_LOW}`",
-            f"- `ACTION_HIGH`: `{swimmer_module.ACTION_HIGH}`",
-            f"- `initial_centroid_x`: `{env_preview.X_ini}`",
-            f"- `initial_centroid_y`: `{env_preview.Y_ini}`",
-            f"- `betamax`: `{env_preview.betamax}`",
-            f"- `betamin`: `{env_preview.betamin}`",
-            f"- `centroid_history_window`: `{env_preview.centroid_history.maxlen}`",
-            f"- `displacement_gate_ref`: `{env_preview.displacement_gate_ref}`",
-            f"- `pressure_reward_coef`: `12.0`",
-            f"- `direction_reward_term`: `-2.0 * (angle_diff / pi) * scale`",
-            f"- `direction_window_steps`: `100 + 100`",
-            f"- `true_centroid_tracking`: `enabled`",
-            f"- `reset_behavior`: `reset-free`",
+            "```python",
+            pformat(env_params, sort_dicts=True),
+            "```",
         ]
     )
 
