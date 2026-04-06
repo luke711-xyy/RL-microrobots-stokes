@@ -21,15 +21,15 @@ folder_name = path.basename(directory_path)
 #N=int(int(folder_name))
 N=10
 M=1
-K_RWD = 4;
+K_RWD = 4
 L=1
 DIST_EPSI_GOAL = 0.004
 COEF_EXCEED=-0.1
-DIST_EPSI_INLET=0.05 # need to prevent the particle from too close to the inlets.
+DIST_EPSI_INLET=0.1 # need to prevent the particle from too close to the inlets.
 MAX_STEP=10000
 DT = 0.01
 PRESSURE_REWARD_COEF = 12.0
-DIRECTION_REWARD_BASE_COEF = -2.0
+DIRECTION_REWARD_BASE_COEF = -50
 DIRECTION_WINDOW_STEPS = 100
 
 ACTION_LOW = -1
@@ -173,7 +173,7 @@ class swimmer_gym(gym.Env):
         self.last_direction_penalty = 0.0
         self.last_angle_diff = 0.0
         self.last_displacement_scale = 0.0
-        self.displacement_gate_ref = 0.05
+        self.displacement_gate_ref = 0.5
         self.last_recent_displacement = 0.0
         self.last_old_displacement = 0.0
         self.last_old_dir_angle = 0.0
