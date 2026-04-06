@@ -1,0 +1,281 @@
+import argparse
+import os
+import sys
+from pathlib import Path
+
+
+BASE_DIR = Path(__file__).resolve().parent
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Dual-Flagella Senior Policy Visualizer")
+    parser.add_argument("--forward_ckpt", type=str, required=True, help="Checkpoint path for the forward primitive policy")
+    parser.add_argument("--cw_ckpt", type=str, required=True, help="Checkpoint path for the clockwise turn primitive policy")
+    parser.add_argument("--ccw_ckpt", type=str, required=True, help="Checkpoint path for the counter-clockwise turn primitive policy")
+    parser.add_argument("--checkpoint", type=str, default=None, help="Senior-policy checkpoint path")
+    parser.add_argument("--steps", type=int, default=200, help="Total macro steps to visualize (default: 200)")
+    parser.add_argument("--speed", type=float, default=0.01, help="Refresh interval in seconds (default: 0.01)")
+    parser.add_argument("--num_cpus", type=int, default=1, help="Number of CPUs used by Ray (default: 1)")
+    parser.add_argument("--num_threads", type=int, default=1, help="Number of PyTorch threads used by the solver (default: 1)")
+    parser.add_argument("--view_range", type=float, default=5.0, help="Half-width of the camera-follow window (default: 5.0)")
+    return parser.parse_args()
+
+
+ARGS = parse_args()
+os.environ["STOKES_NUM_THREADS"] = str(ARGS.num_threads)
+
+os.chdir(BASE_DIR)
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+import matplotlib
+
+if sys.platform == "darwin":
+    matplotlib.use("MacOSX")
+else:
+    matplotlib.use("TkAgg")
+
+import matplotlib.pyplot as plt
+import numpy as np
+import ray
+import ray.rllib.algorithms.ppo as ppo
+
+from swimmer import (
+    MACRO_ACTION_TABLE,
+    LOW_LEVEL_HOLD_STEPS,
+    MACRO_HORIZON,
+    compute_average_heading,
+    compute_true_centroid,
+    swimmer_gym,
+)
+
+
+def build_env_config(cli_args):
+    return {
+        "forward_ckpt": cli_args.forward_ckpt,
+        "cw_ckpt": cli_args.cw_ckpt,
+        "ccw_ckpt": cli_args.ccw_ckpt,
+        "low_level_hold_steps": LOW_LEVEL_HOLD_STEPS,
+        "macro_horizon": MACRO_HORIZON,
+    }
+
+
+def is_checkpoint_path(path_obj):
+    path_obj = Path(path_obj)
+    if not path_obj.exists():
+        return False
+    if path_obj.is_file():
+        return path_obj.name.startswith("checkpoint-")
+    return (
+        path_obj.name.startswith("checkpoint_")
+        or (path_obj / "rllib_checkpoint.json").exists()
+        or (path_obj / ".is_checkpoint").exists()
+    )
+
+
+def checkpoint_sort_key(path_obj):
+    path_obj = Path(path_obj)
+    digits = "".join(ch for ch in path_obj.name if ch.isdigit())
+    order = int(digits) if digits else -1
+    return (order, str(path_obj))
+
+
+def find_latest_checkpoint(base_dir=None):
+    base_dir = Path(base_dir or BASE_DIR)
+    policy_roots = [item for item in base_dir.iterdir() if item.is_dir() and item.name.startswith("policy_")]
+    if not policy_roots:
+        return None
+    latest_policy = max(policy_roots, key=lambda item: item.stat().st_mtime)
+    iter_dirs = [item for item in latest_policy.iterdir() if item.is_dir() and item.name.isdigit()]
+    if not iter_dirs:
+        return None
+    latest_iter = max(iter_dirs, key=lambda item: int(item.name))
+    candidates = sorted([item for item in latest_iter.rglob("*") if is_checkpoint_path(item)], key=checkpoint_sort_key)
+    return candidates[-1] if candidates else None
+
+
+def resolve_checkpoint(path_str):
+    cp_path = Path(path_str).expanduser().resolve()
+    if cp_path.is_file():
+        return cp_path
+    if not cp_path.exists():
+        raise FileNotFoundError(f"Checkpoint path does not exist: {cp_path}")
+    if is_checkpoint_path(cp_path):
+        return cp_path
+
+    direct_candidates = sorted(
+        [candidate for candidate in cp_path.iterdir() if is_checkpoint_path(candidate)],
+        key=checkpoint_sort_key,
+    )
+    if direct_candidates:
+        return direct_candidates[-1]
+
+    nested_candidates = sorted(
+        [candidate for candidate in cp_path.rglob("*") if is_checkpoint_path(candidate)],
+        key=checkpoint_sort_key,
+    )
+    if nested_candidates:
+        return nested_candidates[-1]
+
+    raise FileNotFoundError(f"No checkpoint found under: {cp_path}")
+
+
+def build_config():
+    config = ppo.DEFAULT_CONFIG.copy()
+    config["num_gpus"] = 0
+    config["num_workers"] = 0
+    config["num_rollout_workers"] = 0
+    config["framework"] = "torch"
+    config["env_config"] = build_env_config(ARGS)
+    config["gamma"] = 0.9999
+    config["lr"] = 0.0003
+    config["horizon"] = 50
+    config["rollout_fragment_length"] = 50
+    config["evaluation_duration"] = 10000000
+    config["lr_schedule"] = None
+    config["use_critic"] = True
+    config["use_gae"] = True
+    config["lambda_"] = 0.95
+    config["kl_coeff"] = 0.2
+    config["sgd_minibatch_size"] = 50
+    config["train_batch_size"] = 500
+    config["num_sgd_iter"] = 10
+    config["shuffle_sequences"] = True
+    config["vf_loss_coeff"] = 1.0
+    config["entropy_coeff"] = 0.0
+    config["entropy_coeff_schedule"] = None
+    config["clip_param"] = 0.1
+    config["vf_clip_param"] = 100000
+    config["grad_clip"] = None
+    config["kl_target"] = 0.01
+    config["evaluation_interval"] = 1000000
+    config["evaluation_duration"] = 1
+    config["use_lstm"] = False
+    config["min_sample_timesteps_per_iteration"] = 500
+    config["env"] = swimmer_gym
+    return config
+
+
+def unpack_action_output(action_output):
+    if not isinstance(action_output, tuple):
+        return action_output
+    if len(action_output) == 0:
+        raise ValueError("compute_single_action returned an empty tuple")
+    return action_output[0]
+
+
+def draw_heading(ax, centroid, heading_angle, color):
+    length = 0.6
+    dx = length * np.cos(heading_angle)
+    dy = length * np.sin(heading_angle)
+    ax.plot(
+        [centroid[0], centroid[0] + dx],
+        [centroid[1], centroid[1] + dy],
+        color=color,
+        linewidth=2.0,
+    )
+
+
+def main():
+    if ray.is_initialized():
+        ray.shutdown()
+    ray.init(ignore_reinit_error=True, num_cpus=ARGS.num_cpus, log_to_driver=False)
+
+    env = swimmer_gym(build_env_config(ARGS))
+    obs = env.reset()
+
+    agent = ppo.PPO(config=build_config(), env=swimmer_gym)
+    checkpoint = resolve_checkpoint(ARGS.checkpoint) if ARGS.checkpoint else find_latest_checkpoint()
+    if checkpoint is None:
+        print("[Error] No senior-policy checkpoint found. Run train.py first or pass --checkpoint.")
+        sys.exit(1)
+
+    print(f"Loading senior checkpoint: {checkpoint}")
+    print(f"Ray CPUs: {ARGS.num_cpus}, PyTorch threads: {ARGS.num_threads}")
+    agent.restore(str(checkpoint))
+    print(">>> Checkpoint restore succeeded. Launching visualization window...")
+
+    plt.ion()
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    trace1 = []
+    trace2 = []
+
+    # 可视化按“宏步”刷新；每次 step 内部已经包含 100 个底层子步。
+    for _step in range(ARGS.steps):
+        try:
+            action_output = agent.compute_single_action(observation=obs, explore=False)
+        except TypeError:
+            action_output = agent.compute_single_action(obs, explore=False)
+        action = int(unpack_action_output(action_output))
+        obs, reward, done, _ = env.step(action)
+
+        centroid1 = compute_true_centroid(env.XY_positions1)
+        centroid2 = compute_true_centroid(env.XY_positions2)
+        trace1.append(centroid1)
+        trace2.append(centroid2)
+
+        heading1 = compute_average_heading(env.state1)
+        heading2 = compute_average_heading(env.state2)
+
+        ax.clear()
+        ax.plot(env.XY_positions1[:, 0], env.XY_positions1[:, 1], color="tab:blue", linewidth=2.5)
+        ax.plot(env.XY_positions2[:, 0], env.XY_positions2[:, 1], color="tab:red", linewidth=2.5)
+        ax.scatter([centroid1[0]], [centroid1[1]], color="tab:blue", s=40)
+        ax.scatter([centroid2[0]], [centroid2[1]], color="tab:red", s=40)
+
+        if len(trace1) > 1:
+            trace1_np = np.array(trace1)
+            trace2_np = np.array(trace2)
+            ax.plot(trace1_np[:, 0], trace1_np[:, 1], color="tab:blue", alpha=0.5, linewidth=1.0)
+            ax.plot(trace2_np[:, 0], trace2_np[:, 1], color="tab:red", alpha=0.5, linewidth=1.0)
+
+        draw_heading(ax, centroid1, heading1, "tab:green")
+        draw_heading(ax, centroid2, heading2, "tab:green")
+
+        center_x = 0.5 * (centroid1[0] + centroid2[0])
+        center_y = 0.5 * (centroid1[1] + centroid2[1])
+        ax.set_xlim(center_x - ARGS.view_range, center_x + ARGS.view_range)
+        ax.set_ylim(center_y - ARGS.view_range, center_y + ARGS.view_range)
+        ax.set_aspect("equal", adjustable="box")
+        ax.grid(True, alpha=0.2)
+
+        macro_pair = MACRO_ACTION_TABLE[action]
+        info_text = "\n".join(
+            [
+                f"Macro action: {action} -> {macro_pair[0]} / {macro_pair[1]}",
+                f"Current primitive: {env.current_primitives[0]} / {env.current_primitives[1]}",
+                f"Reward: {reward:.4f}",
+                f"Forward: {env.last_forward_reward:.4f}",
+                f"Dx penalty: {env.last_dx_penalty:.4f}",
+                f"Dy penalty: {env.last_dy_penalty:.4f}",
+                f"Δx: {env.last_delta_x:.4f}, Δy: {env.last_delta_y:.4f}",
+            ]
+        )
+        ax.text(0.02, 0.98, info_text, transform=ax.transAxes, va="top", ha="left", fontsize=10,
+                bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
+        ax.set_title("Dual Flagella Senior Policy Visualization")
+
+        print(
+            f"[Macro {_step + 1:>3d}] action={action} ({macro_pair[0]}-{macro_pair[1]}) | "
+            f"reward={reward:.4f} | forward={env.last_forward_reward:.4f} | "
+            f"dx_pen={env.last_dx_penalty:.4f} | dy_pen={env.last_dy_penalty:.4f} | "
+            f"Δx={env.last_delta_x:.4f} Δy={env.last_delta_y:.4f}"
+        )
+
+        fig.canvas.draw()
+        fig.canvas.flush_events()
+        plt.pause(ARGS.speed)
+
+        if not plt.fignum_exists(fig.number):
+            break
+
+        if done:
+            obs = env.reset()
+
+    plt.ioff()
+    plt.show()
+
+
+if __name__ == "__main__":
+    main()

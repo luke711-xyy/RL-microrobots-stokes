@@ -1,0 +1,471 @@
+import math
+import os
+from collections import deque
+from itertools import product
+from os import path
+from pathlib import Path
+
+import gym
+import numpy as np
+from gym import spaces
+from gym.utils import seeding
+from ray.rllib.policy.policy import Policy
+
+from calculate_v import N, NL, RK_dual
+
+
+directory_path = os.getcwd()
+folder_name = path.basename(directory_path)
+
+
+MAX_STEP = 10000
+DT = 0.01
+
+ACTION_LOW = -1
+ACTION_HIGH = 1
+ACTION_MEAN = (ACTION_LOW + ACTION_HIGH) / 2
+
+LOW_LEVEL_HOLD_STEPS = 100
+MACRO_HORIZON = 50
+
+FORMATION_TARGET_DX = 0.0
+FORMATION_TARGET_DY = 4.0
+FORWARD_REWARD_COEF = 1.0
+DELTA_X_PENALTY_COEF = 1.0
+DELTA_Y_PENALTY_COEF = 2.0
+
+ROBOT1_INIT = (-4.0, 2.0)
+ROBOT2_INIT = (-4.0, -2.0)
+
+PRIMITIVE_NAMES = ("forward", "cw", "ccw")
+PRIMITIVE_TO_ID = {name: idx for idx, name in enumerate(PRIMITIVE_NAMES)}
+MACRO_ACTION_TABLE = list(product(PRIMITIVE_NAMES, repeat=2))
+
+
+traj = []
+traj2 = []
+trajp = []
+
+
+def _stack_trace(existing, row):
+    row = np.asarray(row, dtype=np.float64).reshape(1, -1)
+    if isinstance(existing, list) and len(existing) == 0:
+        return row
+    return np.concatenate((existing.reshape(-1, row.shape[1]), row), axis=0)
+
+
+def compute_true_centroid(xy_positions):
+    xy_positions = np.asarray(xy_positions, dtype=np.float64)
+    return np.mean(xy_positions, axis=0)
+
+
+def compute_average_heading(state_array):
+    head_omega = state_array[2]
+    running_angle = head_omega
+    angle_sum = head_omega
+    for beta in state_array[3:]:
+        running_angle += beta
+        angle_sum += running_angle
+    return angle_sum / (len(state_array) - 2)
+
+
+def primitive_to_one_hot(primitive_name):
+    one_hot = np.zeros((len(PRIMITIVE_NAMES),), dtype=np.float64)
+    one_hot[PRIMITIVE_TO_ID[primitive_name]] = 1.0
+    return one_hot
+
+
+def is_checkpoint_path(path_obj):
+    path_obj = Path(path_obj)
+    if not path_obj.exists():
+        return False
+    if path_obj.is_file():
+        return path_obj.name.startswith("checkpoint-")
+    return (
+        path_obj.name.startswith("checkpoint_")
+        or (path_obj / "rllib_checkpoint.json").exists()
+        or (path_obj / ".is_checkpoint").exists()
+        or (path_obj / "policies" / "default_policy").exists()
+    )
+
+
+def checkpoint_sort_key(path_obj):
+    path_obj = Path(path_obj)
+    digits = "".join(ch for ch in path_obj.name if ch.isdigit())
+    order = int(digits) if digits else -1
+    return (order, str(path_obj))
+
+
+def resolve_policy_checkpoint_dir(path_str):
+    path_obj = Path(path_str).expanduser().resolve()
+    if not path_obj.exists():
+        raise FileNotFoundError(f"Checkpoint path does not exist: {path_obj}")
+
+    if path_obj.is_file():
+        candidate = path_obj.parent / "policies" / "default_policy"
+        if candidate.exists():
+            return candidate
+
+    if (path_obj / "policies" / "default_policy").exists():
+        return path_obj / "policies" / "default_policy"
+
+    direct_candidates = sorted(
+        [candidate for candidate in path_obj.rglob("default_policy") if candidate.is_dir() and candidate.name == "default_policy"],
+        key=checkpoint_sort_key,
+    )
+    if direct_candidates:
+        return direct_candidates[-1]
+
+    raise FileNotFoundError(f"No RLlib policy directory found under: {path_obj}")
+
+
+def restore_policy(path_str):
+    policy_dir = resolve_policy_checkpoint_dir(path_str)
+    restored = Policy.from_checkpoint(str(policy_dir))
+    if isinstance(restored, dict):
+        if "default_policy" in restored:
+            return restored["default_policy"]
+        if len(restored) == 1:
+            return next(iter(restored.values()))
+        raise ValueError(f"Unexpected policy dictionary keys: {list(restored.keys())}")
+    return restored
+
+
+def get_policy_initial_state(policy):
+    try:
+        state = policy.get_initial_state()
+    except Exception:
+        return []
+    return [np.array(item, copy=True) for item in state]
+
+
+def unpack_action_output(action_output, prev_state):
+    if not isinstance(action_output, tuple):
+        return action_output, prev_state
+    if len(action_output) == 0:
+        raise ValueError("compute_single_action returned an empty tuple")
+    action = action_output[0]
+    next_state = prev_state
+    if len(action_output) >= 2 and isinstance(action_output[1], (list, tuple)):
+        next_state = action_output[1]
+    return action, next_state
+
+
+class swimmer_gym(gym.Env):
+    metadata = {
+        "render.modes": ["human"],
+        "video.frames_per_second": 30,
+    }
+
+    def __init__(self, env_config):
+        env_config = env_config or {}
+
+        self.dt = DT
+        self.low_level_hold_steps = int(env_config.get("low_level_hold_steps", LOW_LEVEL_HOLD_STEPS))
+        self.macro_horizon = int(env_config.get("macro_horizon", MACRO_HORIZON))
+        self.skip_policy_load = bool(env_config.get("skip_policy_load", False))
+        self.forward_ckpt = env_config.get("forward_ckpt")
+        self.cw_ckpt = env_config.get("cw_ckpt")
+        self.ccw_ckpt = env_config.get("ccw_ckpt")
+
+        self.betamax = (2 * math.pi) / N
+        self.betamin = -self.betamax * 0.5
+
+        self.action_space = spaces.Discrete(len(MACRO_ACTION_TABLE))
+        self.observation_space = spaces.Box(low=-10000, high=10000, shape=(14,), dtype=np.float64)
+        self.viewer = None
+
+        self.low_level_policies = {}
+        self.low_level_states = [{}, {}]
+        if not self.skip_policy_load:
+            self._load_low_level_policies()
+
+        self.episode_count = 0
+        self.it = 0
+        self.low_level_step_count = 0
+        self.ep_step = 0
+        self.reward = 0.0
+        self.done = False
+
+        self.last_forward_reward = 0.0
+        self.last_dx_penalty = 0.0
+        self.last_dy_penalty = 0.0
+        self.last_delta_x = 0.0
+        self.last_delta_y = 0.0
+        self.last_macro_action = 0
+        self.last_macro_action_names = MACRO_ACTION_TABLE[0]
+
+        self.trace1 = deque(maxlen=1000)
+        self.trace2 = deque(maxlen=1000)
+
+        self._build_initial_geometry()
+
+    def _build_initial_robot_state(self, init_xy):
+        centroid_x, centroid_y = init_xy
+        state = np.zeros((N + 2,), dtype=np.float64)
+        state[0] = centroid_x
+        state[1] = centroid_y
+        state[2] = 0.0
+
+        x_first = np.zeros((2,), dtype=np.float64)
+        x_first[0] = centroid_x - 0.5 * math.cos(state[2])
+        x_first[1] = centroid_y - 0.5 * math.sin(state[2])
+
+        Xp = np.zeros((N + 1,), dtype=np.float64)
+        Yp = np.zeros((N + 1,), dtype=np.float64)
+        for i in range(N + 1):
+            Xp[i] = x_first[0] + i / N * math.cos(state[2])
+            Yp[i] = x_first[1] + i / N * math.sin(state[2])
+        XY_positions = np.concatenate((Xp.reshape(-1, 1), Yp.reshape(-1, 1)), axis=1)
+
+        true_centroid = compute_true_centroid(XY_positions)
+        state[0] = true_centroid[0]
+        state[1] = true_centroid[1]
+        return state, x_first, XY_positions
+
+    def _build_initial_geometry(self):
+        # 两个机器人只在环境第一次建立时做硬初始化；
+        # 后续 reset 维持 reset-free 语义，只清计数器，不回到初始几何状态。
+        self.state1, self.Xfirst1, self.XY_positions1 = self._build_initial_robot_state(ROBOT1_INIT)
+        self.state2, self.Xfirst2, self.XY_positions2 = self._build_initial_robot_state(ROBOT2_INIT)
+
+        self.current_primitives = ["forward", "forward"]
+        self._reset_policy_states()
+
+        centroid1 = compute_true_centroid(self.XY_positions1)
+        centroid2 = compute_true_centroid(self.XY_positions2)
+        self.trace1.clear()
+        self.trace2.clear()
+        self.trace1.append(np.array(centroid1))
+        self.trace2.append(np.array(centroid2))
+
+    def _reset_policy_states(self):
+        if self.skip_policy_load:
+            self.low_level_states = [{}, {}]
+            return
+
+        # 两个机器人共享同一组底层权重，但各自保留自己的 recurrent state。
+        self.low_level_states = []
+        for _robot_idx in range(2):
+            robot_states = {}
+            for primitive_name, policy in self.low_level_policies.items():
+                robot_states[primitive_name] = get_policy_initial_state(policy)
+            self.low_level_states.append(robot_states)
+
+    def _load_low_level_policies(self):
+        required = {
+            "forward": self.forward_ckpt,
+            "cw": self.cw_ckpt,
+            "ccw": self.ccw_ckpt,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise ValueError(f"Missing low-level checkpoint paths for: {', '.join(missing)}")
+
+        for primitive_name, ckpt_path in required.items():
+            self.low_level_policies[primitive_name] = restore_policy(ckpt_path)
+
+    def _get_obs(self):
+        # 高层观测只放摘要量，不直接把散点云塞进 PPO：
+        # 质心、平均朝向、当前 primitive one-hot、以及两个机器人间的相对位形。
+        centroid1 = compute_true_centroid(self.XY_positions1)
+        centroid2 = compute_true_centroid(self.XY_positions2)
+        avg_heading1 = compute_average_heading(self.state1)
+        avg_heading2 = compute_average_heading(self.state2)
+        delta_x = centroid1[0] - centroid2[0]
+        delta_y = centroid1[1] - centroid2[1]
+
+        obs = np.concatenate(
+            (
+                np.array([centroid1[0], centroid1[1], avg_heading1], dtype=np.float64),
+                primitive_to_one_hot(self.current_primitives[0]),
+                np.array([centroid2[0], centroid2[1], avg_heading2], dtype=np.float64),
+                primitive_to_one_hot(self.current_primitives[1]),
+                np.array([delta_x, delta_y], dtype=np.float64),
+            ),
+            axis=0,
+        )
+        return obs.astype(np.float64)
+
+    def _sanitize_low_level_action(self, state, action):
+        action = np.asarray(action, dtype=np.float64)
+        clipped = np.clip(action, ACTION_LOW, ACTION_HIGH)
+        state_predict = state.copy()
+        state_predict[3:] += clipped * 0.2
+        if np.any(np.abs(state_predict[3:]) > self.betamax):
+            return np.zeros_like(clipped)
+        return clipped
+
+    def _compute_low_level_action(self, robot_idx, primitive_name):
+        if self.skip_policy_load:
+            return np.zeros((N - 1,), dtype=np.float64)
+
+        policy = self.low_level_policies[primitive_name]
+        state = self.low_level_states[robot_idx][primitive_name]
+        obs = self.state1[3:].copy() if robot_idx == 0 else self.state2[3:].copy()
+
+        try:
+            action_output = policy.compute_single_action(obs, state=state, explore=False)
+        except TypeError:
+            action_output = policy.compute_single_action(obs, state=state)
+
+        action, next_state = unpack_action_output(action_output, state)
+        self.low_level_states[robot_idx][primitive_name] = next_state
+        action = np.asarray(action, dtype=np.float64).reshape(-1)
+        return self._sanitize_low_level_action(self.state1 if robot_idx == 0 else self.state2, action)
+
+    def _apply_dual_solver(self, action1, action2):
+        # 一个底层子步内，两个机器人在同一流体环境中联合推进。
+        (
+            state1_next,
+            _Xn1,
+            _Yn1,
+            _r1,
+            x_first_delta1,
+            Xpositions1,
+            Ypositions1,
+            state2_next,
+            _Xn2,
+            _Yn2,
+            _r2,
+            x_first_delta2,
+            Xpositions2,
+            Ypositions2,
+            _pressure_diff,
+            _pressure_end,
+            _pressure_all,
+        ) = RK_dual(self.state1, action1, self.Xfirst1, self.state2, action2, self.Xfirst2)
+
+        self.state1 = state1_next.copy()
+        self.state2 = state2_next.copy()
+        self.Xfirst1 = self.Xfirst1 + x_first_delta1
+        self.Xfirst2 = self.Xfirst2 + x_first_delta2
+        self.XY_positions1 = np.concatenate((np.array(Xpositions1).reshape(-1, 1), np.array(Ypositions1).reshape(-1, 1)), axis=1)
+        self.XY_positions2 = np.concatenate((np.array(Xpositions2).reshape(-1, 1), np.array(Ypositions2).reshape(-1, 1)), axis=1)
+
+        centroid1 = compute_true_centroid(self.XY_positions1)
+        centroid2 = compute_true_centroid(self.XY_positions2)
+        self.state1[0] = centroid1[0]
+        self.state1[1] = centroid1[1]
+        self.state2[0] = centroid2[0]
+        self.state2[1] = centroid2[1]
+
+    def _decode_macro_action(self, action):
+        return MACRO_ACTION_TABLE[int(action)]
+
+    def _record_macro_step(self, reward):
+        global traj
+        global traj2
+        global trajp
+
+        combined_state = np.concatenate((self.state1.copy(), self.state2.copy()), axis=0)
+        summary_row = np.array(
+            [
+                self.state1[0],
+                self.state1[1],
+                self.state2[0],
+                self.state2[1],
+                self.last_delta_x,
+                self.last_delta_y,
+                self.last_forward_reward,
+                reward,
+                float(self.last_macro_action),
+            ],
+            dtype=np.float64,
+        )
+        reward_row = np.array(
+            [
+                self.last_forward_reward,
+                self.last_dx_penalty,
+                self.last_dy_penalty,
+            ],
+            dtype=np.float64,
+        )
+
+        traj = _stack_trace(traj, combined_state)
+        traj2 = _stack_trace(traj2, summary_row)
+        trajp = _stack_trace(trajp, reward_row)
+
+        if self.ep_step > 0 and self.ep_step % 100 == 0:
+            path1 = os.path.join(directory_path, "traj")
+            path2 = os.path.join(directory_path, "traj2")
+            pathp = os.path.join(directory_path, "trajp")
+            os.makedirs(path1, exist_ok=True)
+            os.makedirs(path2, exist_ok=True)
+            os.makedirs(pathp, exist_ok=True)
+
+            np.savetxt(os.path.join(path1, f"traj_{len(os.listdir(path1))}.pt"), traj, delimiter=",")
+            np.savetxt(os.path.join(path2, f"traj2_{len(os.listdir(path2))}.pt"), traj2, delimiter=",")
+            np.savetxt(os.path.join(pathp, f"trajp_{len(os.listdir(pathp))}.pt"), trajp, delimiter=",")
+
+            traj = []
+            traj2 = []
+            trajp = []
+
+    def seed(self, seed=None):
+        self.np_random, seed = seeding.np_random(seed)
+        return [seed]
+
+    def step(self, action):
+        self.it += 1
+        self.ep_step += 1
+        self.reward = 0.0
+        self.done = False
+
+        primitive1, primitive2 = self._decode_macro_action(action)
+        self.last_macro_action = int(action)
+        self.last_macro_action_names = (primitive1, primitive2)
+        self.current_primitives = [primitive1, primitive2]
+
+        centroid1_start = compute_true_centroid(self.XY_positions1)
+        centroid2_start = compute_true_centroid(self.XY_positions2)
+
+        # 一个高层宏动作固定保持 100 个底层子步。
+        for _ in range(self.low_level_hold_steps):
+            action1 = self._compute_low_level_action(0, primitive1)
+            action2 = self._compute_low_level_action(1, primitive2)
+            self._apply_dual_solver(action1, action2)
+            self.low_level_step_count += 1
+
+        centroid1_end = compute_true_centroid(self.XY_positions1)
+        centroid2_end = compute_true_centroid(self.XY_positions2)
+        self.trace1.append(np.array(centroid1_end))
+        self.trace2.append(np.array(centroid2_end))
+
+        self.last_delta_x = centroid1_end[0] - centroid2_end[0]
+        self.last_delta_y = centroid1_end[1] - centroid2_end[1]
+        self.last_forward_reward = FORWARD_REWARD_COEF * (
+            0.5 * ((centroid1_end[0] - centroid1_start[0]) + (centroid2_end[0] - centroid2_start[0]))
+        )
+        self.last_dx_penalty = -DELTA_X_PENALTY_COEF * abs(self.last_delta_x - FORMATION_TARGET_DX)
+        self.last_dy_penalty = -DELTA_Y_PENALTY_COEF * abs(self.last_delta_y - FORMATION_TARGET_DY)
+
+        # 高层 reward = 整体前进 - 编队在 x / y 方向上的偏离代价。
+        macro_reward = self.last_forward_reward + self.last_dx_penalty + self.last_dy_penalty
+        self.reward += macro_reward
+
+        if self.ep_step % 10 == 0:
+            print(
+                f"[Macro {self.ep_step:>3d}] pair={primitive1}-{primitive2} | "
+                f"Forward: {self.last_forward_reward:>8.4f}, "
+                f"DxPen: {self.last_dx_penalty:>8.4f}, "
+                f"DyPen: {self.last_dy_penalty:>8.4f}, "
+                f"Δx: {self.last_delta_x:>7.4f}, Δy: {self.last_delta_y:>7.4f}"
+            )
+
+        self._record_macro_step(macro_reward)
+
+        if self.ep_step >= self.macro_horizon:
+            self.done = True
+
+        return self._get_obs(), float(self.reward), self.done, {}
+
+    def reset(self):
+        self.reward = 0.0
+        self.done = False
+        self.ep_step = 0
+        self.episode_count += 1
+        return self._get_obs()
+
+    def render(self):
+        return None
