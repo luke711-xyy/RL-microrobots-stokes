@@ -11,7 +11,7 @@ from gym import spaces
 from gym.utils import seeding
 from ray.rllib.policy.policy import Policy
 
-from calculate_v import N, NL, RK_dual
+from calculate_v import N as SOLVER_N, NL as PRIMITIVE_LINK_NUM, RK_dual
 
 
 directory_path = os.getcwd()
@@ -20,6 +20,13 @@ folder_name = path.basename(directory_path)
 
 MAX_STEP = 10000
 DT = 0.01
+
+# 这里要明确区分两套 N：
+# 1. 求解器里的 SOLVER_N=40，是流体离散后的几何/力点数量；
+# 2. 强化学习里的 PRIMITIVE_LINK_NUM=10，是底层 primitive checkpoint 看到的关节数量。
+# 双机器人高层环境必须沿用底层 primitive 的 10 段状态定义，
+# 不能把求解器离散数 40 直接拿来当底层策略的观测维度。
+ENV_LINK_NUM = PRIMITIVE_LINK_NUM
 
 ACTION_LOW = -1
 ACTION_HIGH = 1
@@ -168,7 +175,7 @@ class swimmer_gym(gym.Env):
         self.cw_ckpt = env_config.get("cw_ckpt")
         self.ccw_ckpt = env_config.get("ccw_ckpt")
 
-        self.betamax = (2 * math.pi) / N
+        self.betamax = (2 * math.pi) / ENV_LINK_NUM
         self.betamin = -self.betamax * 0.5
 
         self.action_space = spaces.Discrete(len(MACRO_ACTION_TABLE))
@@ -202,7 +209,7 @@ class swimmer_gym(gym.Env):
 
     def _build_initial_robot_state(self, init_xy):
         centroid_x, centroid_y = init_xy
-        state = np.zeros((N + 2,), dtype=np.float64)
+        state = np.zeros((ENV_LINK_NUM + 2,), dtype=np.float64)
         state[0] = centroid_x
         state[1] = centroid_y
         state[2] = 0.0
@@ -211,11 +218,11 @@ class swimmer_gym(gym.Env):
         x_first[0] = centroid_x - 0.5 * math.cos(state[2])
         x_first[1] = centroid_y - 0.5 * math.sin(state[2])
 
-        Xp = np.zeros((N + 1,), dtype=np.float64)
-        Yp = np.zeros((N + 1,), dtype=np.float64)
-        for i in range(N + 1):
-            Xp[i] = x_first[0] + i / N * math.cos(state[2])
-            Yp[i] = x_first[1] + i / N * math.sin(state[2])
+        Xp = np.zeros((ENV_LINK_NUM + 1,), dtype=np.float64)
+        Yp = np.zeros((ENV_LINK_NUM + 1,), dtype=np.float64)
+        for i in range(ENV_LINK_NUM + 1):
+            Xp[i] = x_first[0] + i / ENV_LINK_NUM * math.cos(state[2])
+            Yp[i] = x_first[1] + i / ENV_LINK_NUM * math.sin(state[2])
         XY_positions = np.concatenate((Xp.reshape(-1, 1), Yp.reshape(-1, 1)), axis=1)
 
         true_centroid = compute_true_centroid(XY_positions)
@@ -298,7 +305,7 @@ class swimmer_gym(gym.Env):
 
     def _compute_low_level_action(self, robot_idx, primitive_name):
         if self.skip_policy_load:
-            return np.zeros((N - 1,), dtype=np.float64)
+            return np.zeros((ENV_LINK_NUM - 1,), dtype=np.float64)
 
         policy = self.low_level_policies[primitive_name]
         state = self.low_level_states[robot_idx][primitive_name]
