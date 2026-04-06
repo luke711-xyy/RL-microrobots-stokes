@@ -195,9 +195,11 @@ def get_config():
 
     # 网络结构 (LSTM)
     config["use_lstm"] = True
-    config["max_seq_len"] = 20
+    config["max_seq_len"] = 100
 
     # 环境与训练关键参数
+    config["batch_mode"] = "complete_episodes"
+    config["rollout_fragment_length"] = 3000
     config["horizon"] = 3000
     config["gamma"] = 0.9999
     config["lr"] = 0.0003
@@ -205,14 +207,14 @@ def get_config():
     config["lr_schedule"] = None
     config["use_critic"] = True
     config["use_gae"] = True
-    config["lambda_"] = 0.95
+    config["lambda_"] = 0.98
     config["kl_coeff"] = 0.2
-    config["sgd_minibatch_size"] = 64
-    config["train_batch_size"] = 1000
-    config["num_sgd_iter"] = 30
+    config["sgd_minibatch_size"] = 256
+    config["train_batch_size"] = 6000
+    config["num_sgd_iter"] = 15
     config["shuffle_sequences"] = True
     config["vf_loss_coeff"] = 1.0
-    config["entropy_coeff"] = 0.0
+    config["entropy_coeff"] = 0.001
     config["entropy_coeff_schedule"] = None
     config["clip_param"] = 0.1
     config["vf_clip_param"] = 100000
@@ -220,7 +222,7 @@ def get_config():
     config["kl_target"] = 0.01
     config["evaluation_interval"] = 1000000
     config["evaluation_duration"] = 1
-    config["min_sample_timesteps_per_iteration"] = 1000
+    config["min_sample_timesteps_per_iteration"] = 6000
 
     # 必须传入环境类
     config["env"] = swimmer_gym
@@ -307,7 +309,7 @@ def main():
     print("-" * 110)
     print(
         f"{'Step':<10} | {'X Coord':<12} | {'Y Coord':<12} | {'Reward':<12} | "
-        f"{'P_rwd':<10} | {'Dir_pen':<10} | {'Disp100':<10}"
+        f"{'P_rwd':<10} | {'DirPenTot':<10} | {'Drift400':<10} | {'Disp100':<10}"
     )
     print("-" * 110)
 
@@ -335,7 +337,10 @@ def main():
         f"Y: {centroid_y:.2f}\n"
         f"Reward: 0.00\n"
         f"P_rwd: 0.000\n"
-        f"Dir_pen: 0.000\n"
+        f"LocalDirPen: 0.000\n"
+        f"DriftBiasPen: 0.000\n"
+        f"DirPenTotal: 0.000\n"
+        f"CumDriftDeg400: 0.00\n"
         f"Disp100: 0.000\n"
         f"Gate100: {env.displacement_gate_ref:.3f}"
     )
@@ -410,7 +415,10 @@ def main():
                 f"Y: {centroid_y:.2f}\n"
                 f"Reward: {total_reward:.2f}\n"
                 f"P_rwd: {env.last_pressure_reward:.3f}\n"
-                f"Dir_pen: {env.last_direction_penalty:.3f}\n"
+                f"LocalDirPen: {env.last_direction_penalty:.3f}\n"
+                f"DriftBiasPen: {env.last_drift_bias_penalty:.3f}\n"
+                f"DirPenTotal: {env.last_total_direction_penalty:.3f}\n"
+                f"CumDriftDeg400: {env.last_cumulative_drift_deg:.2f}\n"
                 f"Disp100: {env.last_recent_displacement:.3f}\n"
                 f"Gate100: {env.displacement_gate_ref:.3f}"
             )

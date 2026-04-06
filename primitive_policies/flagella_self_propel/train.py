@@ -114,6 +114,10 @@ def write_training_run_markdown(run_dir, cli_args, trainer_config, env_preview):
         "pressure_reward_coef": swimmer_module.PRESSURE_REWARD_COEF,
         "direction_reward_base_coef": swimmer_module.DIRECTION_REWARD_BASE_COEF,
         "direction_window_steps": swimmer_module.DIRECTION_WINDOW_STEPS,
+        "drift_bias_reward_coef": swimmer_module.DRIFT_BIAS_REWARD_COEF,
+        "drift_bias_segments": swimmer_module.DRIFT_BIAS_SEGMENTS,
+        "drift_bias_total_window_steps": swimmer_module.DRIFT_BIAS_TOTAL_WINDOW_STEPS,
+        "direction_term_structure": "local_unsigned_penalty + cumulative_signed_drift_penalty",
         "true_centroid_tracking": True,
         "reset_behavior": "reset-free",
     }

@@ -394,3 +394,31 @@ Recommended entry format for future rounds:
   - if memory use grows too much with `max_seq_len=100`, a fallback of `64` is the first safe rollback point
 - Next step:
   - run a short training job and compare whether early pressure reward rises faster and whether the policy escapes the previous narrow turning gait more often
+
+---
+
+## Entry 017
+
+- Time: 2026-04-06
+- Goal: suppress the forward-policy failure mode where the swimmer drifts in the same turning direction across many windows despite only small local direction changes
+- Key findings:
+  - the current direction term is a linear penalty on a single unsigned 100-step heading change, so it mainly punishes local curvature and is too tolerant of slow, same-sign accumulated drift
+  - with the latest high-level branch values `DIRECTION_REWARD_BASE_COEF=-50` and `displacement_gate_ref=0.5`, a new long-horizon anti-drift term needs to be strong enough to matter but still remain secondary to the local term
+  - a rolling signed-drift penalty across four consecutive 100-step windows directly targets persistent one-sided turning while allowing alternating left-right motion to partially cancel out
+- Files touched:
+  - `primitive_policies/flagella_self_propel/swimmer.py`
+  - `primitive_policies/flagella_self_propel/train.py`
+  - `primitive_policies/flagella_self_propel/visualize_self_propel.py`
+  - `primitive_policies/flagella_self_propel/WORKLOG.md`
+- Actual changes:
+  - added `DRIFT_BIAS_SEGMENTS=4`, `DRIFT_BIAS_REWARD_COEF=-20.0`, and `DRIFT_BIAS_TOTAL_WINDOW_STEPS=400`
+  - increased `centroid_history` from `201` to `401` to support the new long-horizon drift calculation
+  - kept the existing local unsigned 100-step direction penalty and added a cumulative signed-drift penalty over the last four 100-step displacement windows
+  - added diagnostics for local signed turn, cumulative drift in degrees, drift-bias penalty, and total direction penalty
+  - updated `visualize_self_propel.py` to display the new drift diagnostics and aligned its RLlib config with the latest training config
+  - extended `TRAINING_PARAMS.md` generation to record the new drift-bias parameters and direction-term structure
+- Open questions:
+  - if the new drift-bias term makes propulsion overly conservative, the first rollback target is `DRIFT_BIAS_REWARD_COEF` from `-20.0` toward `-15.0`
+  - if slow one-sided drift still survives, the next tuning knob is increasing the drift-bias coefficient or lengthening the cumulative window beyond four segments
+- Next step:
+  - run a short side-by-side training comparison and inspect whether `CumDriftDeg400` and `DriftBiasPen` now rise clearly during one-sided drift episodes

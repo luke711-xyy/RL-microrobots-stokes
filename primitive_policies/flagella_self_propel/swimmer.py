@@ -21,16 +21,19 @@ folder_name = path.basename(directory_path)
 #N=int(int(folder_name))
 N=10
 M=1
-K_RWD = 4;
+K_RWD = 4
 L=1
 DIST_EPSI_GOAL = 0.004
 COEF_EXCEED=-0.1
-DIST_EPSI_INLET=0.05 # need to prevent the particle from too close to the inlets.
+DIST_EPSI_INLET=0.1 # need to prevent the particle from too close to the inlets.
 MAX_STEP=10000
 DT = 0.01
 PRESSURE_REWARD_COEF = 12.0
-DIRECTION_REWARD_BASE_COEF = -2.0
+DIRECTION_REWARD_BASE_COEF = -50
 DIRECTION_WINDOW_STEPS = 100
+DRIFT_BIAS_SEGMENTS = 4
+DRIFT_BIAS_REWARD_COEF = -20.0
+DRIFT_BIAS_TOTAL_WINDOW_STEPS = DIRECTION_WINDOW_STEPS * DRIFT_BIAS_SEGMENTS
 
 ACTION_LOW = -1
 ACTION_HIGH = 1
@@ -69,6 +72,12 @@ dtype = torch.double
 def compute_true_centroid(xy_positions):
     xy_positions = np.asarray(xy_positions, dtype=np.float64)
     return np.mean(xy_positions, axis=0)
+
+
+def compute_signed_turn_angle(old_vec, recent_vec):
+    cross_val = old_vec[0] * recent_vec[1] - old_vec[1] * recent_vec[0]
+    dot_val = np.dot(old_vec, recent_vec)
+    return math.atan2(cross_val, dot_val)
 
 
 
@@ -166,14 +175,19 @@ class swimmer_gym(gym.Env):
         self.pressure_index=1
         self.order=0
         self.escape_count=0
-        self.centroid_history = deque(maxlen=201)
+        self.centroid_history = deque(maxlen=DRIFT_BIAS_TOTAL_WINDOW_STEPS + 1)
         self.episode_count = 0
         self.ep_step = 0
         self.last_pressure_reward = 0.0
         self.last_direction_penalty = 0.0
+        self.last_total_direction_penalty = 0.0
         self.last_angle_diff = 0.0
+        self.last_local_angle_diff = 0.0
+        self.last_signed_turn_deg = 0.0
+        self.last_cumulative_drift_deg = 0.0
+        self.last_drift_bias_penalty = 0.0
         self.last_displacement_scale = 0.0
-        self.displacement_gate_ref = 0.05
+        self.displacement_gate_ref = 0.5
         self.last_recent_displacement = 0.0
         self.last_old_displacement = 0.0
         self.last_old_dir_angle = 0.0
@@ -291,13 +305,18 @@ class swimmer_gym(gym.Env):
 
         self.centroid_history.append(np.array([self.state_n[0], self.state_n[1]]))
         self.last_direction_penalty = 0.0
+        self.last_total_direction_penalty = 0.0
         self.last_angle_diff = 0.0
+        self.last_local_angle_diff = 0.0
+        self.last_signed_turn_deg = 0.0
+        self.last_cumulative_drift_deg = 0.0
+        self.last_drift_bias_penalty = 0.0
         self.last_displacement_scale = 0.0
         self.last_recent_displacement = 0.0
         self.last_old_displacement = 0.0
-        if len(self.centroid_history) >= 201:
+        if len(self.centroid_history) >= (2 * DIRECTION_WINDOW_STEPS + 1):
             pos_current = self.centroid_history[-1]
-            pos_100ago = self.centroid_history[-101]
+            pos_100ago = self.centroid_history[-(DIRECTION_WINDOW_STEPS + 1)]
             pos_200ago = self.centroid_history[0]
             recent_vec = pos_current - pos_100ago
             old_vec = pos_100ago - pos_200ago
@@ -310,21 +329,58 @@ class swimmer_gym(gym.Env):
             if pressure_active and recent_norm > 1e-8 and old_norm > 1e-8:
                 cos_angle = np.clip(np.dot(recent_vec, old_vec) / (recent_norm * old_norm), -1.0, 1.0)
                 self.last_angle_diff = math.acos(cos_angle)
+                self.last_local_angle_diff = self.last_angle_diff
+                self.last_signed_turn_deg = math.degrees(compute_signed_turn_angle(old_vec, recent_vec))
                 self.last_displacement_scale = min(recent_norm / self.displacement_gate_ref, 1.0)
                 self.last_direction_penalty = (
                     DIRECTION_REWARD_BASE_COEF
                     * (self.last_angle_diff / math.pi)
                     * self.last_displacement_scale
                 )
+                self.last_total_direction_penalty = self.last_direction_penalty
                 reward += self.last_direction_penalty
+
+        if len(self.centroid_history) >= DRIFT_BIAS_TOTAL_WINDOW_STEPS + 1:
+            pos_current = self.centroid_history[-1]
+            pos_100ago = self.centroid_history[-(DIRECTION_WINDOW_STEPS + 1)]
+            pos_200ago = self.centroid_history[-(2 * DIRECTION_WINDOW_STEPS + 1)]
+            pos_300ago = self.centroid_history[-(3 * DIRECTION_WINDOW_STEPS + 1)]
+            pos_400ago = self.centroid_history[0]
+            v1 = pos_300ago - pos_400ago
+            v2 = pos_200ago - pos_300ago
+            v3 = pos_100ago - pos_200ago
+            v4 = pos_current - pos_100ago
+            segment_norms = (
+                np.linalg.norm(v1),
+                np.linalg.norm(v2),
+                np.linalg.norm(v3),
+                np.linalg.norm(v4),
+            )
+            if pressure_active and all(norm > 1e-8 for norm in segment_norms):
+                s12 = compute_signed_turn_angle(v1, v2)
+                s23 = compute_signed_turn_angle(v2, v3)
+                s34 = compute_signed_turn_angle(v3, v4)
+                cumulative_signed_drift = s12 + s23 + s34
+                self.last_cumulative_drift_deg = math.degrees(cumulative_signed_drift)
+                self.last_drift_bias_penalty = (
+                    DRIFT_BIAS_REWARD_COEF
+                    * abs(cumulative_signed_drift / math.pi)
+                    * self.last_displacement_scale
+                )
+                self.last_total_direction_penalty = (
+                    self.last_direction_penalty + self.last_drift_bias_penalty
+                )
+                reward += self.last_drift_bias_penalty
 
         self.ep_step += 1
         if self.ep_step % 200 == 0:
             print(f"  [Step {self.ep_step:>4d}] Centroid: ({self.state_n[0]:.4f}, {self.state_n[1]:.4f}) | "
                   f"Dir_prev100: {self.last_old_dir_angle:>7.1f} -> Dir_last100: {self.last_recent_dir_angle:>7.1f} | "
-                  f"P_rwd: {self.last_pressure_reward:>8.4f}, Disp100: {self.last_recent_displacement:>7.4f}, "
-                  f"Gate100: {self.displacement_gate_ref:>7.4f}, "
-                  f"Dir_scale: {self.last_displacement_scale:.3f}, Dir_pen: {self.last_direction_penalty:>8.4f}")
+                  f"P_rwd: {self.last_pressure_reward:>8.4f}, LocalTurnDeg100: {self.last_signed_turn_deg:>8.2f}, "
+                  f"CumDriftDeg400: {self.last_cumulative_drift_deg:>8.2f}, Disp100: {self.last_recent_displacement:>7.4f}, "
+                  f"Gate100: {self.displacement_gate_ref:>7.4f}, Dir_scale: {self.last_displacement_scale:.3f}, "
+                  f"LocalDirPen: {self.last_direction_penalty:>8.4f}, DriftBiasPen: {self.last_drift_bias_penalty:>8.4f}, "
+                  f"DirPenTotal: {self.last_total_direction_penalty:>8.4f}")
 
         self.Xfirst+=x_first_delta
             
@@ -451,6 +507,19 @@ class swimmer_gym(gym.Env):
 
         self.reward=0
         self.ep_step=0
+        self.last_pressure_reward = 0.0
+        self.last_direction_penalty = 0.0
+        self.last_total_direction_penalty = 0.0
+        self.last_angle_diff = 0.0
+        self.last_local_angle_diff = 0.0
+        self.last_signed_turn_deg = 0.0
+        self.last_cumulative_drift_deg = 0.0
+        self.last_drift_bias_penalty = 0.0
+        self.last_displacement_scale = 0.0
+        self.last_recent_displacement = 0.0
+        self.last_old_displacement = 0.0
+        self.last_old_dir_angle = 0.0
+        self.last_recent_dir_angle = 0.0
 
         self.order=0
 
