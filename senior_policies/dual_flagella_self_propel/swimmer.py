@@ -203,6 +203,7 @@ class swimmer_gym(gym.Env):
         self.last_macro_action_names = MACRO_ACTION_TABLE[0]
         self.last_centroid1 = np.zeros((2,), dtype=np.float64)
         self.last_centroid2 = np.zeros((2,), dtype=np.float64)
+        self.last_substep_frames = []
 
         self.trace1 = deque(maxlen=1000)
         self.trace2 = deque(maxlen=1000)
@@ -361,6 +362,19 @@ class swimmer_gym(gym.Env):
         self.state2[0] = centroid2[0]
         self.state2[1] = centroid2[1]
 
+    def _capture_substep_frame(self, substep_index):
+        centroid1 = compute_true_centroid(self.XY_positions1)
+        centroid2 = compute_true_centroid(self.XY_positions2)
+        return {
+            "substep_index": int(substep_index),
+            "xy1": np.array(self.XY_positions1, copy=True),
+            "xy2": np.array(self.XY_positions2, copy=True),
+            "state1": np.array(self.state1, copy=True),
+            "state2": np.array(self.state2, copy=True),
+            "centroid1": np.array(centroid1, copy=True),
+            "centroid2": np.array(centroid2, copy=True),
+        }
+
     def _decode_macro_action(self, action):
         return MACRO_ACTION_TABLE[int(action)]
 
@@ -430,13 +444,15 @@ class swimmer_gym(gym.Env):
 
         centroid1_start = compute_true_centroid(self.XY_positions1)
         centroid2_start = compute_true_centroid(self.XY_positions2)
+        self.last_substep_frames = []
 
         # 一个高层宏动作固定保持 100 个底层子步。
-        for _ in range(self.low_level_hold_steps):
+        for substep_index in range(self.low_level_hold_steps):
             action1 = self._compute_low_level_action(0, primitive1)
             action2 = self._compute_low_level_action(1, primitive2)
             self._apply_dual_solver(action1, action2)
             self.low_level_step_count += 1
+            self.last_substep_frames.append(self._capture_substep_frame(substep_index + 1))
 
         centroid1_end = compute_true_centroid(self.XY_positions1)
         centroid2_end = compute_true_centroid(self.XY_positions2)
@@ -481,6 +497,7 @@ class swimmer_gym(gym.Env):
         self.done = False
         self.ep_step = 0
         self.episode_count += 1
+        self.last_substep_frames = [self._capture_substep_frame(0)]
         return self._get_obs()
 
     def render(self):

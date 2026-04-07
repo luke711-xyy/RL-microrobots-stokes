@@ -14,7 +14,7 @@ def parse_args():
     parser.add_argument("--ccw_ckpt", type=str, required=True, help="Checkpoint path for the counter-clockwise turn primitive policy")
     parser.add_argument("--checkpoint", type=str, default=None, help="Senior-policy checkpoint path")
     parser.add_argument("--steps", type=int, default=200, help="Total macro steps to visualize (default: 200)")
-    parser.add_argument("--speed", type=float, default=0.01, help="Refresh interval in seconds (default: 0.01)")
+    parser.add_argument("--speed", type=float, default=0.01, help="Refresh interval per displayed frame in seconds (default: 0.01)")
     parser.add_argument("--num_cpus", type=int, default=1, help="Number of CPUs used by Ray (default: 1)")
     parser.add_argument("--num_threads", type=int, default=1, help="Number of PyTorch threads used by the solver (default: 1)")
     parser.add_argument("--view_range", type=float, default=5.0, help="Half-width of the camera-follow window (default: 5.0)")
@@ -41,8 +41,8 @@ import ray
 import ray.rllib.algorithms.ppo as ppo
 
 from swimmer import (
-    MACRO_ACTION_TABLE,
     LOW_LEVEL_HOLD_STEPS,
+    MACRO_ACTION_TABLE,
     MACRO_HORIZON,
     compute_average_heading,
     compute_true_centroid,
@@ -176,6 +176,79 @@ def draw_heading(ax, centroid, heading_angle, color):
     )
 
 
+def capture_env_frame(env, substep_index):
+    centroid1 = compute_true_centroid(env.XY_positions1)
+    centroid2 = compute_true_centroid(env.XY_positions2)
+    return {
+        "substep_index": int(substep_index),
+        "xy1": np.array(env.XY_positions1, copy=True),
+        "xy2": np.array(env.XY_positions2, copy=True),
+        "state1": np.array(env.state1, copy=True),
+        "state2": np.array(env.state2, copy=True),
+        "centroid1": np.array(centroid1, copy=True),
+        "centroid2": np.array(centroid2, copy=True),
+    }
+
+
+def render_frame(ax, env, frame, trace1, trace2, macro_index, action, reward):
+    centroid1 = np.array(frame["centroid1"], copy=True)
+    centroid2 = np.array(frame["centroid2"], copy=True)
+    heading1 = compute_average_heading(frame["state1"])
+    heading2 = compute_average_heading(frame["state2"])
+    trace1.append(centroid1)
+    trace2.append(centroid2)
+
+    ax.clear()
+    ax.plot(frame["xy1"][:, 0], frame["xy1"][:, 1], color="tab:blue", linewidth=2.5)
+    ax.plot(frame["xy2"][:, 0], frame["xy2"][:, 1], color="tab:red", linewidth=2.5)
+    ax.scatter([centroid1[0]], [centroid1[1]], color="tab:blue", s=40)
+    ax.scatter([centroid2[0]], [centroid2[1]], color="tab:red", s=40)
+
+    if len(trace1) > 1:
+        trace1_np = np.array(trace1)
+        trace2_np = np.array(trace2)
+        ax.plot(trace1_np[:, 0], trace1_np[:, 1], color="tab:blue", alpha=0.5, linewidth=1.0)
+        ax.plot(trace2_np[:, 0], trace2_np[:, 1], color="tab:red", alpha=0.5, linewidth=1.0)
+
+    draw_heading(ax, centroid1, heading1, "tab:green")
+    draw_heading(ax, centroid2, heading2, "tab:green")
+
+    center_x = 0.5 * (centroid1[0] + centroid2[0])
+    center_y = 0.5 * (centroid1[1] + centroid2[1])
+    ax.set_xlim(center_x - ARGS.view_range, center_x + ARGS.view_range)
+    ax.set_ylim(center_y - ARGS.view_range, center_y + ARGS.view_range)
+    ax.set_aspect("equal", adjustable="box")
+    ax.grid(True, alpha=0.2)
+
+    macro_pair = MACRO_ACTION_TABLE[action]
+    total_substeps = max(len(env.last_substep_frames), 1)
+    substep_index = int(frame.get("substep_index", total_substeps))
+    info_text = "\n".join(
+        [
+            f"Macro step: {macro_index}",
+            f"Substep: {substep_index}/{total_substeps}",
+            f"Macro action: {action} -> {macro_pair[0]} / {macro_pair[1]}",
+            f"Current primitive: {env.current_primitives[0]} / {env.current_primitives[1]}",
+            f"Reward: {reward:.4f}",
+            f"Forward: {env.last_forward_reward:.4f}",
+            f"Dx penalty: {env.last_dx_penalty:.4f}",
+            f"Dy penalty: {env.last_dy_penalty:.4f}",
+            f"dX: {env.last_delta_x:.4f}, dY: {env.last_delta_y:.4f}",
+        ]
+    )
+    ax.text(
+        0.02,
+        0.98,
+        info_text,
+        transform=ax.transAxes,
+        va="top",
+        ha="left",
+        fontsize=10,
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+    )
+    ax.set_title("Dual Flagella Senior Policy Visualization")
+
+
 def main():
     if ray.is_initialized():
         ray.shutdown()
@@ -200,74 +273,41 @@ def main():
 
     trace1 = []
     trace2 = []
+    initial_frame = capture_env_frame(env, substep_index=0)
+    render_frame(ax, env, initial_frame, trace1, trace2, macro_index=0, action=0, reward=0.0)
+    fig.canvas.draw()
+    fig.canvas.flush_events()
+    plt.pause(ARGS.speed)
 
-    # 可视化按“宏步”刷新；每次 step 内部已经包含 100 个底层子步。
-    for _step in range(ARGS.steps):
+    for macro_index in range(1, ARGS.steps + 1):
         try:
             action_output = agent.compute_single_action(observation=obs, explore=False)
         except TypeError:
             action_output = agent.compute_single_action(obs, explore=False)
         action = int(unpack_action_output(action_output))
-        obs, reward, done, _ = env.step(action)
-
-        centroid1 = compute_true_centroid(env.XY_positions1)
-        centroid2 = compute_true_centroid(env.XY_positions2)
-        trace1.append(centroid1)
-        trace2.append(centroid2)
-
-        heading1 = compute_average_heading(env.state1)
-        heading2 = compute_average_heading(env.state2)
-
-        ax.clear()
-        ax.plot(env.XY_positions1[:, 0], env.XY_positions1[:, 1], color="tab:blue", linewidth=2.5)
-        ax.plot(env.XY_positions2[:, 0], env.XY_positions2[:, 1], color="tab:red", linewidth=2.5)
-        ax.scatter([centroid1[0]], [centroid1[1]], color="tab:blue", s=40)
-        ax.scatter([centroid2[0]], [centroid2[1]], color="tab:red", s=40)
-
-        if len(trace1) > 1:
-            trace1_np = np.array(trace1)
-            trace2_np = np.array(trace2)
-            ax.plot(trace1_np[:, 0], trace1_np[:, 1], color="tab:blue", alpha=0.5, linewidth=1.0)
-            ax.plot(trace2_np[:, 0], trace2_np[:, 1], color="tab:red", alpha=0.5, linewidth=1.0)
-
-        draw_heading(ax, centroid1, heading1, "tab:green")
-        draw_heading(ax, centroid2, heading2, "tab:green")
-
-        center_x = 0.5 * (centroid1[0] + centroid2[0])
-        center_y = 0.5 * (centroid1[1] + centroid2[1])
-        ax.set_xlim(center_x - ARGS.view_range, center_x + ARGS.view_range)
-        ax.set_ylim(center_y - ARGS.view_range, center_y + ARGS.view_range)
-        ax.set_aspect("equal", adjustable="box")
-        ax.grid(True, alpha=0.2)
-
         macro_pair = MACRO_ACTION_TABLE[action]
-        info_text = "\n".join(
-            [
-                f"Macro action: {action} -> {macro_pair[0]} / {macro_pair[1]}",
-                f"Current primitive: {env.current_primitives[0]} / {env.current_primitives[1]}",
-                f"Reward: {reward:.4f}",
-                f"Forward: {env.last_forward_reward:.4f}",
-                f"Dx penalty: {env.last_dx_penalty:.4f}",
-                f"Dy penalty: {env.last_dy_penalty:.4f}",
-                f"Δx: {env.last_delta_x:.4f}, Δy: {env.last_delta_y:.4f}",
-            ]
-        )
-        ax.text(0.02, 0.98, info_text, transform=ax.transAxes, va="top", ha="left", fontsize=10,
-                bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
-        ax.set_title("Dual Flagella Senior Policy Visualization")
+        obs, reward, done, _ = env.step(action)
+        frames = env.last_substep_frames if env.last_substep_frames else [capture_env_frame(env, env.low_level_hold_steps)]
 
         print(
-            f"[Macro {_step + 1:>3d}] action={action} ({macro_pair[0]}-{macro_pair[1]}) | "
+            f"[Macro {macro_index:>3d}] action={action} ({macro_pair[0]}-{macro_pair[1]}) | "
             f"reward={reward:.4f} | forward={env.last_forward_reward:.4f} | "
             f"dx_pen={env.last_dx_penalty:.4f} | dy_pen={env.last_dy_penalty:.4f} | "
-            f"Δx={env.last_delta_x:.4f} Δy={env.last_delta_y:.4f}"
+            f"dX={env.last_delta_x:.4f} dY={env.last_delta_y:.4f}"
         )
 
-        fig.canvas.draw()
-        fig.canvas.flush_events()
-        plt.pause(ARGS.speed)
+        should_stop = False
+        for frame in frames:
+            render_frame(ax, env, frame, trace1, trace2, macro_index=macro_index, action=action, reward=reward)
+            fig.canvas.draw()
+            fig.canvas.flush_events()
+            plt.pause(ARGS.speed)
 
-        if not plt.fignum_exists(fig.number):
+            if not plt.fignum_exists(fig.number):
+                should_stop = True
+                break
+
+        if should_stop:
             break
 
         if done:
