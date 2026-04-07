@@ -381,7 +381,12 @@ def Calculate_velocity_dual(x1, w1, x_first1, x2, w2, x_first2):
     B2 = MatrixB(body2["L"], body2["theta"], body2["positions"])
     B_all = build_dual_B_all(B1, B2, force_points_all.shape[0])
 
-    Q_total = build_dual_Q_total(body1["Q"], body2["Q"])
+    # 单体正式求解时，进入约化刚体系统的是 MatrixQ(...) 重排后的 Q，
+    # 不是 MatrixQp/MatrixQp_dense 直接返回的原始堆叠结果。
+    # 双体这里也必须沿用同一语义，否则 MT = AB @ Q_total 的列意义会再次错位。
+    Q_single_1 = MatrixQ(body1["L"], body1["theta"], body1["Qu"], body1["Q1"], body1["Ql"], body1["Q2"])
+    Q_single_2 = MatrixQ(body2["L"], body2["theta"], body2["Qu"], body2["Q1"], body2["Ql"], body2["Q2"])
+    Q_total = build_dual_Q_total(Q_single_1, Q_single_2)
 
     C1_1, C2_1 = MatrixC(body1["action_absolute"])
     C1_2, C2_2 = MatrixC(body2["action_absolute"])
