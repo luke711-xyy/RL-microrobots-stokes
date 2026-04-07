@@ -346,15 +346,29 @@ def build_dual_B_all(B1, B2, total_points):
     force_points_per_body = int(B1.shape[1] // 2)
     B_planar = torch.zeros((6, total_points * 2), dtype=torch.double, device=device)
 
-    # 单体 B_all 的列顺序是 [body_x, body_z, body_y_unused]。
-    # 双体扩展后必须保持同样的“先分量、后机器人”顺序：
-    # [body1_x, body2_x, body1_z, body2_z, body_y_unused]
-    # 这样才能与 A 的块顺序以及 build_dual_Q_total() 的行顺序一致。
-    B_planar[0:3, 0:force_points_per_body] = B1[:, :force_points_per_body]
-    B_planar[0:3, force_points_per_body:total_points] = B2[:, :force_points_per_body]
+    # ?? B ????? 3 ??????[Fx, Fz, torque]?
+    # ?? B ????? [body_x, body_z]?
+    #
+    # ?????????????????????
+    #   rows 0:3 -> ??? 1 ? 3 ?????
+    #   rows 3:6 -> ??? 2 ? 3 ?????
+    #
+    # ????????????????
+    #   [body1_x, body2_x, body1_z, body2_z, body_y_unused]
+    #
+    # ?????????? 3 ???????????? x/z ????
+    # ??? body1_x/body2_x ??????body1_z/body2_z ???????????????????
+    # ??????? M ???? 3 ????
+    B1_x = B1[:, :force_points_per_body]
+    B1_z = B1[:, force_points_per_body:]
+    B2_x = B2[:, :force_points_per_body]
+    B2_z = B2[:, force_points_per_body:]
 
-    B_planar[3:6, total_points : total_points + force_points_per_body] = B1[:, force_points_per_body:]
-    B_planar[3:6, total_points + force_points_per_body : total_points * 2] = B2[:, force_points_per_body:]
+    B_planar[0:3, 0:force_points_per_body] = B1_x
+    B_planar[0:3, total_points : total_points + force_points_per_body] = B1_z
+
+    B_planar[3:6, force_points_per_body:total_points] = B2_x
+    B_planar[3:6, total_points + force_points_per_body : total_points * 2] = B2_z
 
     B_supply = torch.zeros((6, total_points), dtype=torch.double, device=device)
     return torch.cat((B_planar, B_supply), dim=1)
