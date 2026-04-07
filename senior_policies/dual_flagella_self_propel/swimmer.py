@@ -201,6 +201,8 @@ class swimmer_gym(gym.Env):
         self.last_delta_y = 0.0
         self.last_macro_action = 0
         self.last_macro_action_names = MACRO_ACTION_TABLE[0]
+        self.last_centroid1 = np.zeros((2,), dtype=np.float64)
+        self.last_centroid2 = np.zeros((2,), dtype=np.float64)
 
         self.trace1 = deque(maxlen=1000)
         self.trace2 = deque(maxlen=1000)
@@ -241,6 +243,8 @@ class swimmer_gym(gym.Env):
 
         centroid1 = compute_true_centroid(self.XY_positions1)
         centroid2 = compute_true_centroid(self.XY_positions2)
+        self.last_centroid1 = np.array(centroid1, dtype=np.float64)
+        self.last_centroid2 = np.array(centroid2, dtype=np.float64)
         self.trace1.clear()
         self.trace2.clear()
         self.trace1.append(np.array(centroid1))
@@ -436,6 +440,8 @@ class swimmer_gym(gym.Env):
 
         centroid1_end = compute_true_centroid(self.XY_positions1)
         centroid2_end = compute_true_centroid(self.XY_positions2)
+        self.last_centroid1 = np.array(centroid1_end, dtype=np.float64)
+        self.last_centroid2 = np.array(centroid2_end, dtype=np.float64)
         self.trace1.append(np.array(centroid1_end))
         self.trace2.append(np.array(centroid2_end))
 
@@ -451,14 +457,17 @@ class swimmer_gym(gym.Env):
         macro_reward = self.last_forward_reward + self.last_dx_penalty + self.last_dy_penalty
         self.reward += macro_reward
 
-        if self.ep_step % 10 == 0:
-            print(
-                f"[Macro {self.ep_step:>3d}] pair={primitive1}-{primitive2} | "
-                f"Forward: {self.last_forward_reward:>8.4f}, "
-                f"DxPen: {self.last_dx_penalty:>8.4f}, "
-                f"DyPen: {self.last_dy_penalty:>8.4f}, "
-                f"Δx: {self.last_delta_x:>7.4f}, Δy: {self.last_delta_y:>7.4f}"
-            )
+        # 每一个高层环境步都打印，便于直接观察双机器人是否发生数值跳变。
+        print(
+            f"[Macro {self.ep_step:>3d}] pair={primitive1}-{primitive2} | "
+            f"Reward: {macro_reward:>9.4f}, "
+            f"Forward: {self.last_forward_reward:>9.4f}, "
+            f"DxPen: {self.last_dx_penalty:>9.4f}, "
+            f"DyPen: {self.last_dy_penalty:>9.4f} | "
+            f"R1: ({centroid1_end[0]:>10.4f}, {centroid1_end[1]:>10.4f}), "
+            f"R2: ({centroid2_end[0]:>10.4f}, {centroid2_end[1]:>10.4f}) | "
+            f"dX: {self.last_delta_x:>10.4f}, dY: {self.last_delta_y:>10.4f}"
+        )
 
         self._record_macro_step(macro_reward)
 

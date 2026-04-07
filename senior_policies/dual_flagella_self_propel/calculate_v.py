@@ -196,6 +196,22 @@ def _block_diag_two(left, right):
     return output
 
 
+def build_dual_Q_total(Q1, Q2):
+    point_num = int(Q1.shape[0] // 2)
+    state_dim_1 = int(Q1.shape[1])
+    state_dim_2 = int(Q2.shape[1])
+
+    # 单体 Q 的行顺序是 [body_x, body_z]。
+    # 双体耦合时，B_all 的平面列顺序应为 [body1_x, body2_x, body1_z, body2_z]，
+    # 因此这里不能直接 block-diag(Q1, Q2)，而要显式重排成同一套基底。
+    output = torch.zeros((point_num * 4, state_dim_1 + state_dim_2), dtype=torch.double, device=device)
+    output[0:point_num, 0:state_dim_1] = Q1[0:point_num, :]
+    output[point_num : point_num * 2, state_dim_1 : state_dim_1 + state_dim_2] = Q2[0:point_num, :]
+    output[point_num * 2 : point_num * 3, 0:state_dim_1] = Q1[point_num:, :]
+    output[point_num * 3 : point_num * 4, state_dim_1 : state_dim_1 + state_dim_2] = Q2[point_num:, :]
+    return output
+
+
 def _initial_single(x, w, x_first, n_segments, n_links):
     segment_length = 1.0 / n_segments
     e = segment_length * 0.1
@@ -305,21 +321,24 @@ def build_joint_stokeslet_matrix(force_points, x_match, z_match, valid_mask, e):
     e2 = e**2
 
     s00 = (RD + e2 * RD3 + delta_x * delta_x * RD3) * valid
-    s02 = (delta_x * delta_z * RD3) * valid
-    s11 = (RD + e2 * RD3) * valid
-    s22 = (RD + e2 * RD3 + delta_z * delta_z * RD3) * valid
+    sxz = (delta_x * delta_z * RD3) * valid
+    syy = (RD + e2 * RD3) * valid
+    szz = (RD + e2 * RD3 + delta_z * delta_z * RD3) * valid
 
     s00 = torch.sum(s00, dim=2)
-    s02 = torch.sum(s02, dim=2)
-    s11 = torch.sum(s11, dim=2)
-    s22 = torch.sum(s22, dim=2)
+    sxz = torch.sum(sxz, dim=2)
+    syy = torch.sum(syy, dim=2)
+    szz = torch.sum(szz, dim=2)
 
     A = torch.zeros((point_num * 3, point_num * 3), dtype=torch.double, device=device)
+    # 必须保持与单体原始求解器一致的块顺序：[x, z, y_unused]。
+    # 虽然当前任务只在 x-z 平面运动，但第三个分量的位置仍要保留原顺序，
+    # 否则 B_all / Q_total 的平面块就会与 A 的列基底错位。
     A[0:point_num, 0:point_num] = s00
-    A[0:point_num, point_num * 2 : point_num * 3] = s02
-    A[point_num : point_num * 2, point_num : point_num * 2] = s11
-    A[point_num * 2 : point_num * 3, 0:point_num] = s02
-    A[point_num * 2 : point_num * 3, point_num * 2 : point_num * 3] = s22
+    A[0:point_num, point_num : point_num * 2] = sxz
+    A[point_num : point_num * 2, 0:point_num] = sxz
+    A[point_num : point_num * 2, point_num : point_num * 2] = szz
+    A[point_num * 2 : point_num * 3, point_num * 2 : point_num * 3] = syy
     return A / (8 * math.pi * MU)
 
 
@@ -327,15 +346,14 @@ def build_dual_B_all(B1, B2, total_points):
     force_points_per_body = int(B1.shape[1] // 2)
     B_planar = torch.zeros((6, total_points * 2), dtype=torch.double, device=device)
 
-    # 单体 B 的平面列顺序是 [body_x, body_y]。
-    # 双体这里必须和 Q_total 的行顺序保持一致：
-    # [body1_x, body1_y, body2_x, body2_y]
-    # 不能写成 [body1_x, body2_x, body1_y, body2_y]，
-    # 否则后面的 AB @ Q_total 会在不同基底上相乘，导致约化刚体矩阵 M 退化。
+    # 单体 B_all 的列顺序是 [body_x, body_z, body_y_unused]。
+    # 双体扩展后必须保持同样的“先分量、后机器人”顺序：
+    # [body1_x, body2_x, body1_z, body2_z, body_y_unused]
+    # 这样才能与 A 的块顺序以及 build_dual_Q_total() 的行顺序一致。
     B_planar[0:3, 0:force_points_per_body] = B1[:, :force_points_per_body]
-    B_planar[0:3, force_points_per_body:total_points] = B1[:, force_points_per_body:]
+    B_planar[0:3, force_points_per_body:total_points] = B2[:, :force_points_per_body]
 
-    B_planar[3:6, total_points : total_points + force_points_per_body] = B2[:, :force_points_per_body]
+    B_planar[3:6, total_points : total_points + force_points_per_body] = B1[:, force_points_per_body:]
     B_planar[3:6, total_points + force_points_per_body : total_points * 2] = B2[:, force_points_per_body:]
 
     B_supply = torch.zeros((6, total_points), dtype=torch.double, device=device)
@@ -363,7 +381,7 @@ def Calculate_velocity_dual(x1, w1, x_first1, x2, w2, x_first2):
     B2 = MatrixB(body2["L"], body2["theta"], body2["positions"])
     B_all = build_dual_B_all(B1, B2, force_points_all.shape[0])
 
-    Q_total = _block_diag_two(body1["Q"], body2["Q"])
+    Q_total = build_dual_Q_total(body1["Q"], body2["Q"])
 
     C1_1, C2_1 = MatrixC(body1["action_absolute"])
     C1_2, C2_2 = MatrixC(body2["action_absolute"])
