@@ -327,10 +327,15 @@ def build_dual_B_all(B1, B2, total_points):
     force_points_per_body = int(B1.shape[1] // 2)
     B_planar = torch.zeros((6, total_points * 2), dtype=torch.double, device=device)
 
+    # 单体 B 的平面列顺序是 [body_x, body_y]。
+    # 双体这里必须和 Q_total 的行顺序保持一致：
+    # [body1_x, body1_y, body2_x, body2_y]
+    # 不能写成 [body1_x, body2_x, body1_y, body2_y]，
+    # 否则后面的 AB @ Q_total 会在不同基底上相乘，导致约化刚体矩阵 M 退化。
     B_planar[0:3, 0:force_points_per_body] = B1[:, :force_points_per_body]
-    B_planar[0:3, total_points : total_points + force_points_per_body] = B1[:, force_points_per_body:]
+    B_planar[0:3, force_points_per_body:total_points] = B1[:, force_points_per_body:]
 
-    B_planar[3:6, force_points_per_body:total_points] = B2[:, :force_points_per_body]
+    B_planar[3:6, total_points : total_points + force_points_per_body] = B2[:, :force_points_per_body]
     B_planar[3:6, total_points + force_points_per_body : total_points * 2] = B2[:, force_points_per_body:]
 
     B_supply = torch.zeros((6, total_points), dtype=torch.double, device=device)
