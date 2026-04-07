@@ -386,8 +386,11 @@ def Calculate_velocity_dual(x1, w1, x_first1, x2, w2, x_first2):
     veloall1 = torch.matmul(D1_1, rigid_vel_1) + D2_1
     veloall2 = torch.matmul(D1_2, rigid_vel_2) + D2_2
 
-    velon1 = np.zeros((N + 2), dtype=np.float64)
-    velon2 = np.zeros((N + 2), dtype=np.float64)
+    # 这里返回给高层环境的是“低层 primitive 状态”的更新量，
+    # 维度必须和输入的 x1/x2 保持一致（12 = 3 + 9），
+    # 不能误用求解器离散数 N=40 去生成 42 维状态。
+    velon1 = np.zeros_like(x1, dtype=np.float64)
+    velon2 = np.zeros_like(x2, dtype=np.float64)
 
     veloall1_np = np.squeeze(veloall1.detach().cpu().numpy())
     veloall2_np = np.squeeze(veloall2.detach().cpu().numpy())
