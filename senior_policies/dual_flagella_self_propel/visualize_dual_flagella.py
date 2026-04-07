@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+from collections import deque
 from pathlib import Path
 
 
@@ -190,7 +191,7 @@ def capture_env_frame(env, substep_index):
     }
 
 
-def render_frame(ax, env, frame, trace1, trace2, macro_index, action, reward):
+def render_frame(ax, frame, trace1, trace2, macro_index, action, reward, primitive_pair, total_substeps):
     centroid1 = np.array(frame["centroid1"], copy=True)
     centroid2 = np.array(frame["centroid2"], copy=True)
     heading1 = compute_average_heading(frame["state1"])
@@ -221,14 +222,13 @@ def render_frame(ax, env, frame, trace1, trace2, macro_index, action, reward):
     ax.grid(True, alpha=0.2)
 
     macro_pair = MACRO_ACTION_TABLE[action]
-    total_substeps = max(len(env.last_substep_frames), 1)
     substep_index = int(frame.get("substep_index", total_substeps))
     info_text = "\n".join(
         [
             f"Macro step: {macro_index}",
             f"Substep: {substep_index}/{total_substeps}",
             f"Macro action: {action} -> {macro_pair[0]} / {macro_pair[1]}",
-            f"Current primitive: {env.current_primitives[0]} / {env.current_primitives[1]}",
+            f"Current primitive: {primitive_pair[0]} / {primitive_pair[1]}",
             f"Reward: {reward:.4f}",
             f"Forward: {env.last_forward_reward:.4f}",
             f"Dx penalty: {env.last_dx_penalty:.4f}",
@@ -247,6 +247,30 @@ def render_frame(ax, env, frame, trace1, trace2, macro_index, action, reward):
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
     )
     ax.set_title("Dual Flagella Senior Policy Visualization")
+
+
+def compute_macro_package(agent, env, obs):
+    try:
+        action_output = agent.compute_single_action(observation=obs, explore=False)
+    except TypeError:
+        action_output = agent.compute_single_action(obs, explore=False)
+    action = int(unpack_action_output(action_output))
+    next_obs, reward, done, _ = env.step(action)
+    frames = env.last_substep_frames if env.last_substep_frames else [capture_env_frame(env, env.low_level_hold_steps)]
+    package = {
+        "action": action,
+        "reward": reward,
+        "done": done,
+        "next_obs": next_obs,
+        "frames": frames,
+        "macro_pair": MACRO_ACTION_TABLE[action],
+        "forward_reward": env.last_forward_reward,
+        "dx_penalty": env.last_dx_penalty,
+        "dy_penalty": env.last_dy_penalty,
+        "delta_x": env.last_delta_x,
+        "delta_y": env.last_delta_y,
+    }
+    return package
 
 
 def main():
@@ -274,31 +298,61 @@ def main():
     trace1 = []
     trace2 = []
     initial_frame = capture_env_frame(env, substep_index=0)
-    render_frame(ax, env, initial_frame, trace1, trace2, macro_index=0, action=0, reward=0.0)
+    render_frame(
+        ax,
+        initial_frame,
+        trace1,
+        trace2,
+        macro_index=0,
+        action=0,
+        reward=0.0,
+        primitive_pair=("forward", "forward"),
+        total_substeps=1,
+    )
     fig.canvas.draw()
     fig.canvas.flush_events()
     plt.pause(ARGS.speed)
 
-    for macro_index in range(1, ARGS.steps + 1):
-        try:
-            action_output = agent.compute_single_action(observation=obs, explore=False)
-        except TypeError:
-            action_output = agent.compute_single_action(obs, explore=False)
-        action = int(unpack_action_output(action_output))
-        macro_pair = MACRO_ACTION_TABLE[action]
-        obs, reward, done, _ = env.step(action)
-        frames = env.last_substep_frames if env.last_substep_frames else [capture_env_frame(env, env.low_level_hold_steps)]
+    preload_queue = deque()
+    preload_size = 2
+    macro_index = 0
+
+    while macro_index < ARGS.steps:
+        while len(preload_queue) < preload_size and (macro_index + len(preload_queue)) < ARGS.steps:
+            preload_queue.append(compute_macro_package(agent, env, obs))
+            obs = preload_queue[-1]["next_obs"]
+            if preload_queue[-1]["done"]:
+                obs = env.reset()
+
+        if not preload_queue:
+            break
+
+        macro_index += 1
+        package = preload_queue.popleft()
+        action = package["action"]
+        reward = package["reward"]
+        macro_pair = package["macro_pair"]
 
         print(
             f"[Macro {macro_index:>3d}] action={action} ({macro_pair[0]}-{macro_pair[1]}) | "
-            f"reward={reward:.4f} | forward={env.last_forward_reward:.4f} | "
-            f"dx_pen={env.last_dx_penalty:.4f} | dy_pen={env.last_dy_penalty:.4f} | "
-            f"dX={env.last_delta_x:.4f} dY={env.last_delta_y:.4f}"
+            f"reward={reward:.4f} | forward={package['forward_reward']:.4f} | "
+            f"dx_pen={package['dx_penalty']:.4f} | dy_pen={package['dy_penalty']:.4f} | "
+            f"dX={package['delta_x']:.4f} dY={package['delta_y']:.4f}"
         )
 
         should_stop = False
-        for frame in frames:
-            render_frame(ax, env, frame, trace1, trace2, macro_index=macro_index, action=action, reward=reward)
+        for frame in package["frames"]:
+            render_frame(
+                ax,
+                frame,
+                trace1,
+                trace2,
+                macro_index=macro_index,
+                action=action,
+                reward=reward,
+                primitive_pair=macro_pair,
+                total_substeps=len(package["frames"]),
+            )
             fig.canvas.draw()
             fig.canvas.flush_events()
             plt.pause(ARGS.speed)
@@ -309,9 +363,6 @@ def main():
 
         if should_stop:
             break
-
-        if done:
-            obs = env.reset()
 
     plt.ioff()
     plt.show()
