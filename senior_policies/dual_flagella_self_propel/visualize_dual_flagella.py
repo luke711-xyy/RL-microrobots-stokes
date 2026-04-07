@@ -191,7 +191,22 @@ def capture_env_frame(env, substep_index):
     }
 
 
-def render_frame(ax, frame, trace1, trace2, macro_index, action, reward, primitive_pair, total_substeps):
+def render_frame(
+    ax,
+    frame,
+    trace1,
+    trace2,
+    macro_index,
+    action,
+    reward,
+    primitive_pair,
+    total_substeps,
+    forward_reward,
+    dx_penalty,
+    dy_penalty,
+    delta_x,
+    delta_y,
+):
     centroid1 = np.array(frame["centroid1"], copy=True)
     centroid2 = np.array(frame["centroid2"], copy=True)
     heading1 = compute_average_heading(frame["state1"])
@@ -230,10 +245,10 @@ def render_frame(ax, frame, trace1, trace2, macro_index, action, reward, primiti
             f"Macro action: {action} -> {macro_pair[0]} / {macro_pair[1]}",
             f"Current primitive: {primitive_pair[0]} / {primitive_pair[1]}",
             f"Reward: {reward:.4f}",
-            f"Forward: {env.last_forward_reward:.4f}",
-            f"Dx penalty: {env.last_dx_penalty:.4f}",
-            f"Dy penalty: {env.last_dy_penalty:.4f}",
-            f"dX: {env.last_delta_x:.4f}, dY: {env.last_delta_y:.4f}",
+            f"Forward: {forward_reward:.4f}",
+            f"Dx penalty: {dx_penalty:.4f}",
+            f"Dy penalty: {dy_penalty:.4f}",
+            f"dX: {delta_x:.4f}, dY: {delta_y:.4f}",
         ]
     )
     ax.text(
@@ -308,6 +323,11 @@ def main():
         reward=0.0,
         primitive_pair=("forward", "forward"),
         total_substeps=1,
+        forward_reward=0.0,
+        dx_penalty=0.0,
+        dy_penalty=0.0,
+        delta_x=0.0,
+        delta_y=0.0,
     )
     fig.canvas.draw()
     fig.canvas.flush_events()
@@ -352,6 +372,11 @@ def main():
                 reward=reward,
                 primitive_pair=macro_pair,
                 total_substeps=len(package["frames"]),
+                forward_reward=package["forward_reward"],
+                dx_penalty=package["dx_penalty"],
+                dy_penalty=package["dy_penalty"],
+                delta_x=package["delta_x"],
+                delta_y=package["delta_y"],
             )
             fig.canvas.draw()
             fig.canvas.flush_events()
