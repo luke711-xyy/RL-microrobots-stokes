@@ -1,8 +1,10 @@
 import argparse
 import os
 import sys
-from collections import deque
 from pathlib import Path
+from queue import Full, Queue
+from threading import Event, Thread
+import traceback
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -288,6 +290,45 @@ def compute_macro_package(agent, env, obs):
     return package
 
 
+def producer_loop(agent, env, initial_obs, output_queue, stop_event, total_steps):
+    obs = initial_obs
+    produced = 0
+    try:
+        while produced < total_steps and not stop_event.is_set():
+            package = compute_macro_package(agent, env, obs)
+            while not stop_event.is_set():
+                try:
+                    output_queue.put(package, timeout=0.1)
+                    break
+                except Full:
+                    continue
+            if stop_event.is_set():
+                break
+            produced += 1
+            obs = package["next_obs"]
+            if package["done"]:
+                obs = env.reset()
+    except Exception:
+        error_package = {
+            "error": True,
+            "traceback": traceback.format_exc(),
+        }
+        while not stop_event.is_set():
+            try:
+                output_queue.put(error_package, timeout=0.1)
+                break
+            except Full:
+                continue
+    finally:
+        sentinel = {"done_producing": True}
+        while not stop_event.is_set():
+            try:
+                output_queue.put(sentinel, timeout=0.1)
+                break
+            except Full:
+                continue
+
+
 def main():
     if ray.is_initialized():
         ray.shutdown()
@@ -333,61 +374,68 @@ def main():
     fig.canvas.flush_events()
     plt.pause(ARGS.speed)
 
-    preload_queue = deque()
     preload_size = 2
+    package_queue = Queue(maxsize=preload_size)
+    stop_event = Event()
+    producer = Thread(
+        target=producer_loop,
+        args=(agent, env, obs, package_queue, stop_event, ARGS.steps),
+        daemon=True,
+    )
+    producer.start()
     macro_index = 0
 
-    while macro_index < ARGS.steps:
-        while len(preload_queue) < preload_size and (macro_index + len(preload_queue)) < ARGS.steps:
-            preload_queue.append(compute_macro_package(agent, env, obs))
-            obs = preload_queue[-1]["next_obs"]
-            if preload_queue[-1]["done"]:
-                obs = env.reset()
-
-        if not preload_queue:
-            break
-
-        macro_index += 1
-        package = preload_queue.popleft()
-        action = package["action"]
-        reward = package["reward"]
-        macro_pair = package["macro_pair"]
-
-        print(
-            f"[Macro {macro_index:>3d}] action={action} ({macro_pair[0]}-{macro_pair[1]}) | "
-            f"reward={reward:.4f} | forward={package['forward_reward']:.4f} | "
-            f"dx_pen={package['dx_penalty']:.4f} | dy_pen={package['dy_penalty']:.4f} | "
-            f"dX={package['delta_x']:.4f} dY={package['delta_y']:.4f}"
-        )
-
-        should_stop = False
-        for frame in package["frames"]:
-            render_frame(
-                ax,
-                frame,
-                trace1,
-                trace2,
-                macro_index=macro_index,
-                action=action,
-                reward=reward,
-                primitive_pair=macro_pair,
-                total_substeps=len(package["frames"]),
-                forward_reward=package["forward_reward"],
-                dx_penalty=package["dx_penalty"],
-                dy_penalty=package["dy_penalty"],
-                delta_x=package["delta_x"],
-                delta_y=package["delta_y"],
-            )
-            fig.canvas.draw()
-            fig.canvas.flush_events()
-            plt.pause(ARGS.speed)
-
-            if not plt.fignum_exists(fig.number):
-                should_stop = True
+    try:
+        while macro_index < ARGS.steps:
+            package = package_queue.get()
+            if package.get("error"):
+                raise RuntimeError(package["traceback"])
+            if package.get("done_producing"):
                 break
 
-        if should_stop:
-            break
+            macro_index += 1
+            action = package["action"]
+            reward = package["reward"]
+            macro_pair = package["macro_pair"]
+
+            print(
+                f"[Macro {macro_index:>3d}] action={action} ({macro_pair[0]}-{macro_pair[1]}) | "
+                f"reward={reward:.4f} | forward={package['forward_reward']:.4f} | "
+                f"dx_pen={package['dx_penalty']:.4f} | dy_pen={package['dy_penalty']:.4f} | "
+                f"dX={package['delta_x']:.4f} dY={package['delta_y']:.4f}"
+            )
+
+            should_stop = False
+            for frame in package["frames"]:
+                render_frame(
+                    ax,
+                    frame,
+                    trace1,
+                    trace2,
+                    macro_index=macro_index,
+                    action=action,
+                    reward=reward,
+                    primitive_pair=macro_pair,
+                    total_substeps=len(package["frames"]),
+                    forward_reward=package["forward_reward"],
+                    dx_penalty=package["dx_penalty"],
+                    dy_penalty=package["dy_penalty"],
+                    delta_x=package["delta_x"],
+                    delta_y=package["delta_y"],
+                )
+                fig.canvas.draw()
+                fig.canvas.flush_events()
+                plt.pause(ARGS.speed)
+
+                if not plt.fignum_exists(fig.number):
+                    should_stop = True
+                    break
+
+            if should_stop:
+                break
+    finally:
+        stop_event.set()
+        producer.join(timeout=2.0)
 
     plt.ioff()
     plt.show()
