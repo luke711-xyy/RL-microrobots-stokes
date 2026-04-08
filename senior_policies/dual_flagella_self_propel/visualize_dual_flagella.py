@@ -220,6 +220,8 @@ def render_frame(
     dy_penalty,
     delta_x,
     delta_y,
+    queue_fill,
+    queue_capacity,
 ):
     centroid1 = np.array(frame["centroid1"], copy=True)
     centroid2 = np.array(frame["centroid2"], copy=True)
@@ -263,6 +265,7 @@ def render_frame(
             f"Dx penalty: {dx_penalty:.4f}",
             f"Dy penalty: {dy_penalty:.4f}",
             f"dX: {delta_x:.4f}, dY: {delta_y:.4f}",
+            f"Buffer: {queue_fill}/{queue_capacity}",
         ]
     )
     ax.text(
@@ -381,6 +384,8 @@ def main():
         dy_penalty=0.0,
         delta_x=0.0,
         delta_y=0.0,
+        queue_fill=0,
+        queue_capacity=max(1, ARGS.prefetch_queue_size),
     )
     fig.canvas.draw()
     fig.canvas.flush_events()
@@ -452,6 +457,8 @@ def main():
                     dy_penalty=package["dy_penalty"],
                     delta_x=package["delta_x"],
                     delta_y=package["delta_y"],
+                    queue_fill=package_queue.qsize(),
+                    queue_capacity=preload_size,
                 )
                 fig.canvas.draw()
                 fig.canvas.flush_events()
