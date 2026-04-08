@@ -317,7 +317,7 @@ class swimmer_gym(gym.Env):
         if len(self.centroid_history) >= (2 * DIRECTION_WINDOW_STEPS + 1):
             pos_current = self.centroid_history[-1]
             pos_100ago = self.centroid_history[-(DIRECTION_WINDOW_STEPS + 1)]
-            pos_200ago = self.centroid_history[0]
+            pos_200ago = self.centroid_history[-(2 * DIRECTION_WINDOW_STEPS + 1)]
             recent_vec = pos_current - pos_100ago
             old_vec = pos_100ago - pos_200ago
             recent_norm = np.linalg.norm(recent_vec)
