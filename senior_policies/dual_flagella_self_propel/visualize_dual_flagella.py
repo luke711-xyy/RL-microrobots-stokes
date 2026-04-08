@@ -21,6 +21,18 @@ def parse_args():
     parser.add_argument("--num_cpus", type=int, default=1, help="Number of CPUs used by Ray (default: 1)")
     parser.add_argument("--num_threads", type=int, default=1, help="Number of PyTorch threads used by the solver (default: 1)")
     parser.add_argument("--view_range", type=float, default=5.0, help="Half-width of the camera-follow window (default: 5.0)")
+    parser.add_argument(
+        "--prefetch_queue_size",
+        type=int,
+        default=10,
+        help="Maximum number of precomputed macro-step packages kept in the queue (default: 10)",
+    )
+    parser.add_argument(
+        "--prefetch_warmup_steps",
+        type=int,
+        default=10,
+        help="Number of macro-step packages to preload before playback starts (default: 10)",
+    )
     return parser.parse_args()
 
 
@@ -374,7 +386,7 @@ def main():
     fig.canvas.flush_events()
     plt.pause(ARGS.speed)
 
-    preload_size = 2
+    preload_size = max(1, ARGS.prefetch_queue_size)
     package_queue = Queue(maxsize=preload_size)
     stop_event = Event()
     producer = Thread(
@@ -384,6 +396,24 @@ def main():
     )
     producer.start()
     macro_index = 0
+
+    warmup_steps = min(max(1, ARGS.prefetch_warmup_steps), preload_size, ARGS.steps)
+    print(
+        f">>> Warming up playback queue: target {warmup_steps} macro steps "
+        f"(queue size {preload_size})"
+    )
+    while package_queue.qsize() < warmup_steps and producer.is_alive():
+        if not plt.fignum_exists(fig.number):
+            stop_event.set()
+            producer.join(timeout=2.0)
+            plt.ioff()
+            return
+        fig.canvas.draw()
+        fig.canvas.flush_events()
+        plt.pause(0.05)
+
+    if package_queue.qsize() > 0:
+        print(f">>> Playback queue warmup complete: {package_queue.qsize()} macro steps buffered")
 
     try:
         while macro_index < ARGS.steps:
