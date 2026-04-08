@@ -41,8 +41,8 @@ FORWARD_REWARD_COEF = 1.0
 DELTA_X_PENALTY_COEF = 1.0
 DELTA_Y_PENALTY_COEF = 2.0
 
-ROBOT1_INIT = (-4.0, 2.0)
-ROBOT2_INIT = (-4.0, -2.0)
+ROBOT1_INIT = (-4.0, 0.2)
+ROBOT2_INIT = (-4.0, -0.2)
 
 PRIMITIVE_NAMES = ("forward", "cw", "ccw")
 PRIMITIVE_TO_ID = {name: idx for idx, name in enumerate(PRIMITIVE_NAMES)}

@@ -149,7 +149,7 @@ def main():
     for i in range(2000):
         print(i)
         trainer.train()
-        if i % 10 == 0:
+        if i % 3 == 0:
             ckpt_dir = osp.join(POLICY_DIR, str(i))
             os.makedirs(ckpt_dir, exist_ok=True)
             trainer.save(ckpt_dir)
