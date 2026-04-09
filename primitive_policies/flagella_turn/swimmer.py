@@ -184,7 +184,7 @@ class swimmer_gym(gym.Env):
         self.last_signed_turn = 0.0
         self.last_signed_turn_deg = 0.0
         self.last_turn_scale = 0.0
-        self.displacement_gate_ref = 0.05
+        self.displacement_gate_ref = 0.5
         self.last_recent_displacement = 0.0
         self.last_old_displacement = 0.0
         self.last_old_dir_angle = 0.0
