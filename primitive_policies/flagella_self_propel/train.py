@@ -18,19 +18,90 @@ from ray.rllib.env.base_env import BaseEnv
 from ray.rllib.algorithms.ppo import PPO
 import ray.rllib.algorithms.ppo as ppo
 from ray.rllib.algorithms.ppo import PPOConfig
+from ray.rllib.algorithms.callbacks import DefaultCallbacks
 from ray.tune.logger import pretty_print
 from ray.rllib.utils.typing import ModelConfigDict, TensorType
 import numpy as np
 import math
 from os import path
 
+class TrainingMetricsCallback(DefaultCallbacks):
+    def on_episode_end(self, *, worker, base_env, policies, episode, env_index, **kwargs):
+        sub_envs = base_env.get_sub_environments()
+        if not sub_envs:
+            return
+        env_ref = sub_envs[env_index]
+        episode.custom_metrics["pressure_reward"] = float(getattr(env_ref, "last_pressure_reward", 0.0))
+        episode.custom_metrics["direction_penalty_local"] = float(getattr(env_ref, "last_direction_penalty", 0.0))
+        episode.custom_metrics["direction_penalty_total"] = float(getattr(env_ref, "last_total_direction_penalty", 0.0))
+        episode.custom_metrics["drift_bias_penalty"] = float(getattr(env_ref, "last_drift_bias_penalty", 0.0))
+        episode.custom_metrics["recent_displacement"] = float(getattr(env_ref, "last_recent_displacement", 0.0))
+        episode.custom_metrics["cumulative_drift_deg"] = float(getattr(env_ref, "last_cumulative_drift_deg", 0.0))
+        episode.custom_metrics["local_turn_deg"] = float(getattr(env_ref, "last_signed_turn_deg", 0.0))
+        episode.custom_metrics["displacement_scale"] = float(getattr(env_ref, "last_displacement_scale", 0.0))
+        episode.custom_metrics["episode_steps"] = float(getattr(env_ref, "ep_step", 0))
+
+
+def maybe_add_scalar(writer, tag, value, step):
+    if isinstance(value, bool):
+        writer.add_scalar(tag, int(value), step)
+        return
+    if isinstance(value, (int, float)):
+        writer.add_scalar(tag, value, step)
+        return
+    if hasattr(value, "item"):
+        try:
+            writer.add_scalar(tag, float(value.item()), step)
+        except Exception:
+            return
+
+
+def write_training_scalars(writer, result, iteration):
+    maybe_add_scalar(writer, "training/episode_reward_mean", result.get("episode_reward_mean"), iteration)
+    maybe_add_scalar(writer, "training/episode_reward_min", result.get("episode_reward_min"), iteration)
+    maybe_add_scalar(writer, "training/episode_reward_max", result.get("episode_reward_max"), iteration)
+    maybe_add_scalar(writer, "training/episodes_total", result.get("episodes_total"), iteration)
+    maybe_add_scalar(writer, "training/num_env_steps_sampled", result.get("num_env_steps_sampled"), iteration)
+    maybe_add_scalar(writer, "training/num_env_steps_trained", result.get("num_env_steps_trained"), iteration)
+    maybe_add_scalar(writer, "training/num_agent_steps_sampled", result.get("num_agent_steps_sampled"), iteration)
+    maybe_add_scalar(writer, "training/num_agent_steps_trained", result.get("num_agent_steps_trained"), iteration)
+    maybe_add_scalar(writer, "training/sampler_results/episode_len_mean", result.get("sampler_results", {}).get("episode_len_mean"), iteration)
+
+    learner_info = result.get("info", {}).get("learner", {}).get("default_policy", {})
+    for key in ("learner_stats", "stats"):
+        stats = learner_info.get(key, {})
+        if not isinstance(stats, dict):
+            continue
+        for name, value in stats.items():
+            maybe_add_scalar(writer, f"learner/{name}", value, iteration)
+
+    custom_metrics = result.get("custom_metrics", {})
+    if isinstance(custom_metrics, dict):
+        for name, value in custom_metrics.items():
+            maybe_add_scalar(writer, f"custom_metrics/{name}", value, iteration)
+
+
+def create_summary_writer(log_dir):
+    try:
+        from torch.utils.tensorboard import SummaryWriter
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "TensorBoard logging requires the 'tensorboard' package. "
+            "Install it with 'pip install tensorboard' before training."
+        ) from exc
+    return SummaryWriter(log_dir=log_dir)
+
+
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 cwd = os.path.join(os.getcwd(), f"policy_{timestamp}")
 cwd2 = os.path.join(os.getcwd(),"policy/checkpoint_000000/checkpoint-0")
+tb_dir = os.path.join(cwd, "tensorboard")
 print(f"Policy save dir: {cwd}")
+print(f"TensorBoard log dir: {tb_dir}")
 print(f"Ray CPUs: {args.num_cpus}, PyTorch threads: {args.num_threads}")
 print(os.getcwd())
 os.makedirs(cwd, exist_ok=True)
+os.makedirs(tb_dir, exist_ok=True)
 ray.init(ignore_reinit_error=True, num_cpus=args.num_cpus)
 # trainer = ppo.PPOTrainer(env=swimmer_gym, config={
 #     "env_config": {},  # config to pass to env class
@@ -97,6 +168,7 @@ config["max_seq_len"]= 100
 # config[ "timesteps_per_iteration"]=500
 
 config["min_sample_timesteps_per_iteration"]= 6000
+config["callbacks"] = TrainingMetricsCallback
 
 
 def write_training_run_markdown(run_dir, cli_args, trainer_config, env_preview):
@@ -196,6 +268,7 @@ env.__init__(env,{})
 #trainer.restore(cwd2)
 #trainer = config.build(env=env)
 trainer= ppo.PPO(config=config, env=env)
+tb_writer = create_summary_writer(tb_dir)
 now_path=os.getcwd()
 path1 = os.path.join(now_path,'traj')
 path2 = os.path.join(now_path, 'traj2')
@@ -225,6 +298,9 @@ for i in range(2000):
 #         trainer=None
 #         trainer= ppo.PPO(config=config, env=env)    
     result = trainer.train()
+    write_training_scalars(tb_writer, result, i)
+    tb_writer.flush()
+    print(pretty_print(result))
     if i%10==0:
         path = os.path.join(cwd, str(i))
         os.makedirs(path, exist_ok=True)
@@ -233,3 +309,4 @@ for i in range(2000):
 #     trainer.evaluate()
     #print("checkpoint saved at", checkpoint)
 #trainer.export_policy_model(cwd)
+tb_writer.close()
