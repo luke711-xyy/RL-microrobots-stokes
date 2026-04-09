@@ -17,6 +17,8 @@ import os.path as osp
 
 import ray
 import ray.rllib.algorithms.ppo as ppo
+from ray.rllib.algorithms.callbacks import DefaultCallbacks
+from ray.tune.logger import pretty_print
 
 import swimmer as swimmer_module
 from swimmer import MACRO_ACTION_TABLE, swimmer_gym
@@ -24,6 +26,73 @@ from swimmer import MACRO_ACTION_TABLE, swimmer_gym
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 POLICY_DIR = os.path.join(os.getcwd(), f"policy_{TIMESTAMP}")
+TENSORBOARD_DIR = os.path.join(POLICY_DIR, "tensorboard")
+
+
+class TrainingMetricsCallback(DefaultCallbacks):
+    def on_episode_end(self, *, worker, base_env, policies, episode, env_index, **kwargs):
+        sub_envs = base_env.get_sub_environments()
+        if not sub_envs:
+            return
+
+        env_ref = sub_envs[env_index]
+        episode.custom_metrics["forward_reward"] = float(getattr(env_ref, "last_forward_reward", 0.0))
+        episode.custom_metrics["dx_penalty"] = float(getattr(env_ref, "last_dx_penalty", 0.0))
+        episode.custom_metrics["dy_penalty"] = float(getattr(env_ref, "last_dy_penalty", 0.0))
+        episode.custom_metrics["delta_x"] = float(getattr(env_ref, "last_delta_x", 0.0))
+        episode.custom_metrics["delta_y"] = float(getattr(env_ref, "last_delta_y", 0.0))
+        episode.custom_metrics["macro_action_id"] = float(getattr(env_ref, "last_macro_action", 0))
+        episode.custom_metrics["episode_steps"] = float(getattr(env_ref, "ep_step", 0))
+
+
+def maybe_add_scalar(writer, tag, value, step):
+    if isinstance(value, bool):
+        writer.add_scalar(tag, int(value), step)
+        return
+    if isinstance(value, (int, float)):
+        writer.add_scalar(tag, value, step)
+        return
+    if hasattr(value, "item"):
+        try:
+            writer.add_scalar(tag, float(value.item()), step)
+        except Exception:
+            return
+
+
+def write_training_scalars(writer, result, iteration):
+    maybe_add_scalar(writer, "training/episode_reward_mean", result.get("episode_reward_mean"), iteration)
+    maybe_add_scalar(writer, "training/episode_reward_min", result.get("episode_reward_min"), iteration)
+    maybe_add_scalar(writer, "training/episode_reward_max", result.get("episode_reward_max"), iteration)
+    maybe_add_scalar(writer, "training/episodes_total", result.get("episodes_total"), iteration)
+    maybe_add_scalar(writer, "training/num_env_steps_sampled", result.get("num_env_steps_sampled"), iteration)
+    maybe_add_scalar(writer, "training/num_env_steps_trained", result.get("num_env_steps_trained"), iteration)
+    maybe_add_scalar(writer, "training/num_agent_steps_sampled", result.get("num_agent_steps_sampled"), iteration)
+    maybe_add_scalar(writer, "training/num_agent_steps_trained", result.get("num_agent_steps_trained"), iteration)
+    maybe_add_scalar(writer, "training/sampler_results/episode_len_mean", result.get("sampler_results", {}).get("episode_len_mean"), iteration)
+
+    learner_info = result.get("info", {}).get("learner", {}).get("default_policy", {})
+    for key in ("learner_stats", "stats"):
+        stats = learner_info.get(key, {})
+        if not isinstance(stats, dict):
+            continue
+        for name, value in stats.items():
+            maybe_add_scalar(writer, f"learner/{name}", value, iteration)
+
+    custom_metrics = result.get("custom_metrics", {})
+    if isinstance(custom_metrics, dict):
+        for name, value in custom_metrics.items():
+            maybe_add_scalar(writer, f"custom_metrics/{name}", value, iteration)
+
+
+def create_summary_writer(log_dir):
+    try:
+        from torch.utils.tensorboard import SummaryWriter
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "TensorBoard logging requires the 'tensorboard' package. "
+            "Install it with 'pip install tensorboard' before training."
+        ) from exc
+    return SummaryWriter(log_dir=log_dir)
 
 
 def build_env_config(cli_args, skip_policy_load=False):
@@ -71,6 +140,7 @@ def build_ppo_config(cli_args):
     config["evaluation_duration"] = 1
     config["use_lstm"] = False
     config["min_sample_timesteps_per_iteration"] = 500
+    config["callbacks"] = TrainingMetricsCallback
     return config
 
 
@@ -126,8 +196,10 @@ def write_training_run_markdown(run_dir, cli_args, trainer_config):
 
 def main():
     os.makedirs(POLICY_DIR, exist_ok=True)
+    os.makedirs(TENSORBOARD_DIR, exist_ok=True)
 
     print(f"Policy save dir: {POLICY_DIR}")
+    print(f"TensorBoard log dir: {TENSORBOARD_DIR}")
     print(f"Ray CPUs: {args.num_cpus}, PyTorch threads: {args.num_threads}")
     print(f"Forward primitive: {args.forward_ckpt}")
     print(f"CW primitive: {args.cw_ckpt}")
@@ -141,6 +213,7 @@ def main():
     write_training_run_markdown(POLICY_DIR, args, config)
 
     trainer = ppo.PPO(config=config, env=swimmer_gym)
+    tb_writer = create_summary_writer(TENSORBOARD_DIR)
 
     now_path = os.getcwd()
     for sub_dir in ("traj", "traj2", "trajp"):
@@ -148,11 +221,16 @@ def main():
 
     for i in range(2000):
         print(i)
-        trainer.train()
+        result = trainer.train()
+        write_training_scalars(tb_writer, result, i)
+        tb_writer.flush()
+        print(pretty_print(result))
         if i % 3 == 0:
             ckpt_dir = osp.join(POLICY_DIR, str(i))
             os.makedirs(ckpt_dir, exist_ok=True)
             trainer.save(ckpt_dir)
+
+    tb_writer.close()
 
 
 if __name__ == "__main__":
