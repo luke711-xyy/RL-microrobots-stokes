@@ -38,12 +38,8 @@ class TrainingMetricsCallback(DefaultCallbacks):
         if not sub_envs:
             return
         env_ref = sub_envs[env_index]
-        current_episode = int(getattr(env_ref, "episode_count", 0)) + 1
-        if current_episode % 10 != 0:
-            return
         episode.custom_metrics["pressure_reward"] = float(getattr(env_ref, "last_pressure_reward", 0.0))
         episode.custom_metrics["turn_reward"] = float(getattr(env_ref, "last_turn_reward", 0.0))
-        episode.custom_metrics["signed_turn_deg"] = float(getattr(env_ref, "last_signed_turn_deg", 0.0))
         episode.custom_metrics["turn_scale"] = float(getattr(env_ref, "last_turn_scale", 0.0))
         episode.custom_metrics["recent_displacement"] = float(getattr(env_ref, "last_recent_displacement", 0.0))
         episode.custom_metrics["episode_steps"] = float(getattr(env_ref, "ep_step", 0))
@@ -69,18 +65,7 @@ def write_training_scalars(writer, result, iteration):
     maybe_add_scalar(writer, "training/episode_reward_max", result.get("episode_reward_max"), iteration)
     maybe_add_scalar(writer, "training/episodes_total", result.get("episodes_total"), iteration)
     maybe_add_scalar(writer, "training/num_env_steps_sampled", result.get("num_env_steps_sampled"), iteration)
-    maybe_add_scalar(writer, "training/num_env_steps_trained", result.get("num_env_steps_trained"), iteration)
-    maybe_add_scalar(writer, "training/num_agent_steps_sampled", result.get("num_agent_steps_sampled"), iteration)
-    maybe_add_scalar(writer, "training/num_agent_steps_trained", result.get("num_agent_steps_trained"), iteration)
     maybe_add_scalar(writer, "training/sampler_results/episode_len_mean", result.get("sampler_results", {}).get("episode_len_mean"), iteration)
-
-    learner_info = result.get("info", {}).get("learner", {}).get("default_policy", {})
-    for key in ("learner_stats", "stats"):
-        stats = learner_info.get(key, {})
-        if not isinstance(stats, dict):
-            continue
-        for name, value in stats.items():
-            maybe_add_scalar(writer, f"learner/{name}", value, iteration)
 
     custom_metrics = result.get("custom_metrics", {})
     if isinstance(custom_metrics, dict):
@@ -308,14 +293,15 @@ for i in range(2000):
 #         trainer= ppo.PPO(config=config, env=env)    
     result = trainer.train()
     write_training_scalars(tb_writer, result, i)
-    tb_writer.flush()
     print(pretty_print(result))
     if i%10==0:
         path = os.path.join(cwd, str(i))
         os.makedirs(path, exist_ok=True)
         checkpoint = trainer.save(path)
+        tb_writer.flush()
 #     print(i)
 #     trainer.evaluate()
     #print("checkpoint saved at", checkpoint)
 #trainer.export_policy_model(cwd)
+tb_writer.flush()
 tb_writer.close()
