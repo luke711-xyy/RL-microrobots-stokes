@@ -31,6 +31,9 @@ class TrainingMetricsCallback(DefaultCallbacks):
         if not sub_envs:
             return
         env_ref = sub_envs[env_index]
+        current_episode = int(getattr(env_ref, "episode_count", 0)) + 1
+        if current_episode % 10 != 0:
+            return
         episode.custom_metrics["pressure_reward"] = float(getattr(env_ref, "last_pressure_reward", 0.0))
         episode.custom_metrics["direction_penalty_local"] = float(getattr(env_ref, "last_direction_penalty", 0.0))
         episode.custom_metrics["direction_penalty_total"] = float(getattr(env_ref, "last_total_direction_penalty", 0.0))
