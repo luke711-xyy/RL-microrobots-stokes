@@ -219,11 +219,14 @@ def main():
     for sub_dir in ("traj", "traj2", "trajp"):
         os.makedirs(os.path.join(now_path, sub_dir), exist_ok=True)
 
+    tb_write_interval = 6
+
     for i in range(2000):
         print(i)
         result = trainer.train()
-        write_training_scalars(tb_writer, result, i)
-        tb_writer.flush()
+        if i % tb_write_interval == 0:
+            write_training_scalars(tb_writer, result, i)
+            tb_writer.flush()
         print(pretty_print(result))
         if i % 3 == 0:
             ckpt_dir = osp.join(POLICY_DIR, str(i))
