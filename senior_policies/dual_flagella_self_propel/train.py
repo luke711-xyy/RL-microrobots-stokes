@@ -114,7 +114,7 @@ def build_ppo_config(cli_args):
     config["framework"] = "torch"
     config["env_config"] = build_env_config(cli_args)
 
-    config["gamma"] = 0.9999
+    config["gamma"] = 0.995
     config["lr"] = 0.0003
     config["horizon"] = swimmer_module.MACRO_HORIZON
     config["rollout_fragment_length"] = swimmer_module.MACRO_HORIZON
@@ -125,12 +125,12 @@ def build_ppo_config(cli_args):
     config["use_gae"] = True
     config["lambda_"] = 0.95
     config["kl_coeff"] = 0.2
-    config["sgd_minibatch_size"] = 50
-    config["train_batch_size"] = 500
+    config["sgd_minibatch_size"] = 100
+    config["train_batch_size"] = 800
     config["num_sgd_iter"] = 10
     config["shuffle_sequences"] = True
     config["vf_loss_coeff"] = 1.0
-    config["entropy_coeff"] = 0.0
+    config["entropy_coeff"] = 0.001
     config["entropy_coeff_schedule"] = None
     config["clip_param"] = 0.1
     config["vf_clip_param"] = 100000

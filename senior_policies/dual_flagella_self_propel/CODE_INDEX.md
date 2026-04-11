@@ -7,7 +7,7 @@
 - 两个 flagella 机器人处于同一平面、同一流体求解环境
 - 高层只有一个 joint PPO agent
 - 高层动作是 9 个宏动作之一，对应两个机器人各自从 `{forward, cw, ccw}` 中选一个底层 primitive
-- 每个高层 step 固定执行 100 个底层子步，然后再重新筛选 primitive
+- 每个高层 step 固定执行 25 个底层子步，然后再重新筛选 primitive
 
 ## 2. 文件职责
 
@@ -59,8 +59,8 @@
 
 | 名称 | 值 | 作用 |
 | --- | --- | --- |
-| `LOW_LEVEL_HOLD_STEPS` | `100` | 每个宏动作持续的底层子步数 |
-| `MACRO_HORIZON` | `50` | 每个 episode 的宏步数 |
+| `LOW_LEVEL_HOLD_STEPS` | `25` | 每个宏动作持续的底层子步数 |
+| `MACRO_HORIZON` | `200` | 每个 episode 的宏步数 |
 | `ROBOT1_INIT` | `(-4, 2)` | 机器人 1 初始位置 |
 | `ROBOT2_INIT` | `(-4, -2)` | 机器人 2 初始位置 |
 | `FORMATION_TARGET_DX` | `0.0` | 编队目标相对 x 间距 |
@@ -91,7 +91,7 @@ reward = avg_dx - |delta_x - 0| - 2 * |delta_y - 4|
 ## 6. 物理求解链路
 
 1. 高层环境在每个宏步内固定 primitive 组合
-2. 两个机器人各自调用对应底层 checkpoint，连续输出 100 个低层动作
+2. 两个机器人各自调用对应底层 checkpoint，连续输出 25 个低层动作
 3. 每个低层动作调用一次 `RK_dual(...)`
 4. `RK_dual(...)` 内部再执行 10 次数值子步
 5. `Calculate_velocity_dual(...)` 把两条链条的离散点并入同一个线性系统求解刚体速度和流体耦合

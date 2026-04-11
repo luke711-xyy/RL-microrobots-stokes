@@ -32,8 +32,8 @@ ACTION_LOW = -1
 ACTION_HIGH = 1
 ACTION_MEAN = (ACTION_LOW + ACTION_HIGH) / 2
 
-LOW_LEVEL_HOLD_STEPS = 100
-MACRO_HORIZON = 50
+LOW_LEVEL_HOLD_STEPS = 25
+MACRO_HORIZON = 200
 
 FORMATION_TARGET_DX = 0.0
 FORMATION_TARGET_DY = 4.0
@@ -446,7 +446,7 @@ class swimmer_gym(gym.Env):
         centroid2_start = compute_true_centroid(self.XY_positions2)
         self.last_substep_frames = []
 
-        # 一个高层宏动作固定保持 100 个底层子步。
+        # 一个高层宏动作固定保持 25 个底层子步。
         for substep_index in range(self.low_level_hold_steps):
             action1 = self._compute_low_level_action(0, primitive1)
             action2 = self._compute_low_level_action(1, primitive2)
