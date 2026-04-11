@@ -55,11 +55,17 @@ def maybe_add_scalar(writer, tag, value, step):
 
 def write_training_scalars(writer, result, iteration):
     maybe_add_scalar(writer, "training/episode_reward_mean", result.get("episode_reward_mean"), iteration)
-    maybe_add_scalar(writer, "training/episode_reward_min", result.get("episode_reward_min"), iteration)
-    maybe_add_scalar(writer, "training/episode_reward_max", result.get("episode_reward_max"), iteration)
     maybe_add_scalar(writer, "training/episodes_total", result.get("episodes_total"), iteration)
     maybe_add_scalar(writer, "training/num_env_steps_sampled", result.get("num_env_steps_sampled"), iteration)
     maybe_add_scalar(writer, "training/sampler_results/episode_len_mean", result.get("sampler_results", {}).get("episode_len_mean"), iteration)
+
+    learner_info = result.get("info", {}).get("learner", {}).get("default_policy", {})
+    for key in ("learner_stats", "stats"):
+        stats = learner_info.get(key, {})
+        if not isinstance(stats, dict):
+            continue
+        for name, value in stats.items():
+            maybe_add_scalar(writer, f"learner/{name}", value, iteration)
 
     custom_metrics = result.get("custom_metrics", {})
     if isinstance(custom_metrics, dict):
