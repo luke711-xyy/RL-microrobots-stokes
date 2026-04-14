@@ -31,7 +31,7 @@ ACTION_HIGH = 1
 ACTION_MEAN = (ACTION_LOW + ACTION_HIGH) / 2
 
 LOW_LEVEL_HOLD_STEPS = 25
-MACRO_HORIZON = 20
+MACRO_HORIZON = 50
 
 FORMATION_TARGET_DX = 0.0
 FORMATION_TARGET_DY = 2.0
@@ -40,6 +40,9 @@ SHAPE_ERROR_X_WEIGHT = 30.0
 SHAPE_ERROR_Y_WEIGHT = 20.0
 SHAPE_TREND_REWARD_COEF = 10.0
 SHAPE_ANCHOR_PENALTY_COEF = 0.2
+SHAPE_TREND_FADE_LOW = 3.0
+SHAPE_TREND_FADE_HIGH = 8.0
+SHAPE_ANCHOR_NEAR_MULTIPLIER = 2.0
 
 ROBOT1_INIT = (-4.0, 0.2)
 ROBOT2_INIT = (-4.0, -0.2)
@@ -74,6 +77,14 @@ def compute_average_heading(state_array):
         running_angle += beta
         angle_sum += running_angle
     return angle_sum / (len(state_array) - 2)
+
+
+def compute_trend_weight(shape_error):
+    if shape_error <= SHAPE_TREND_FADE_LOW:
+        return 0.0
+    if shape_error >= SHAPE_TREND_FADE_HIGH:
+        return 1.0
+    return (shape_error - SHAPE_TREND_FADE_LOW) / (SHAPE_TREND_FADE_HIGH - SHAPE_TREND_FADE_LOW)
 
 
 def primitive_to_one_hot(primitive_name):
@@ -201,6 +212,8 @@ class swimmer_gym(gym.Env):
         self.last_err_y = 0.0
         self.last_shape_error = 0.0
         self.last_prev_shape_error = 0.0
+        self.last_trend_weight = 1.0
+        self.last_anchor_weight = 1.0
         self.last_delta_x = 0.0
         self.last_delta_y = 0.0
         self.last_macro_action = 0
@@ -262,6 +275,8 @@ class swimmer_gym(gym.Env):
             SHAPE_ERROR_X_WEIGHT * self.last_err_x + SHAPE_ERROR_Y_WEIGHT * self.last_err_y
         )
         self.last_prev_shape_error = self.last_shape_error
+        self.last_trend_weight = compute_trend_weight(self.last_shape_error)
+        self.last_anchor_weight = 0.5 + 1.5 * (1.0 - self.last_trend_weight)
         self.last_shape_trend_reward = 0.0
         self.last_shape_anchor_penalty = 0.0
         self.last_macro_action = 0
@@ -421,6 +436,8 @@ class swimmer_gym(gym.Env):
                 self.last_shape_anchor_penalty,
                 self.last_shape_error,
                 self.last_prev_shape_error,
+                self.last_trend_weight,
+                self.last_anchor_weight,
             ],
             dtype=np.float64,
         )
@@ -488,10 +505,16 @@ class swimmer_gym(gym.Env):
         self.last_err_y = abs(self.last_delta_y - FORMATION_TARGET_DY)
         self.last_prev_shape_error = self.last_shape_error
         self.last_shape_error = SHAPE_ERROR_X_WEIGHT * self.last_err_x + SHAPE_ERROR_Y_WEIGHT * self.last_err_y
-        self.last_shape_trend_reward = SHAPE_TREND_REWARD_COEF * (
-            self.last_prev_shape_error - self.last_shape_error
+        self.last_trend_weight = compute_trend_weight(self.last_shape_error)
+        self.last_anchor_weight = 0.5 + 1.5 * (1.0 - self.last_trend_weight)
+        self.last_shape_trend_reward = (
+            self.last_trend_weight
+            * SHAPE_TREND_REWARD_COEF
+            * (self.last_prev_shape_error - self.last_shape_error)
         )
-        self.last_shape_anchor_penalty = -SHAPE_ANCHOR_PENALTY_COEF * self.last_shape_error
+        self.last_shape_anchor_penalty = (
+            -self.last_anchor_weight * SHAPE_ANCHOR_PENALTY_COEF * self.last_shape_error
+        )
 
         # 高层 reward = 整体前进 + 编队误差改善趋势 + 当前形态锚定项。
         macro_reward = (
@@ -510,6 +533,8 @@ class swimmer_gym(gym.Env):
             f"Anchor: {self.last_shape_anchor_penalty:>9.4f}, "
             f"ShapeErr: {self.last_shape_error:>9.4f}, "
             f"PrevShapeErr: {self.last_prev_shape_error:>9.4f} | "
+            f"TrendW: {self.last_trend_weight:>6.3f}, "
+            f"AnchorW: {self.last_anchor_weight:>6.3f} | "
             f"R1: ({centroid1_end[0]:>10.4f}, {centroid1_end[1]:>10.4f}), "
             f"R2: ({centroid2_end[0]:>10.4f}, {centroid2_end[1]:>10.4f}) | "
             f"dX: {self.last_delta_x:>10.4f}, dY: {self.last_delta_y:>10.4f}, "

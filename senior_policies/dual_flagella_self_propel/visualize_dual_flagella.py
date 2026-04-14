@@ -158,7 +158,7 @@ def build_config():
     config["lambda_"] = 0.95
     config["kl_coeff"] = 0.2
     config["sgd_minibatch_size"] = 100
-    config["train_batch_size"] = 400
+    config["train_batch_size"] = 500
     config["num_sgd_iter"] = 10
     config["shuffle_sequences"] = True
     config["vf_loss_coeff"] = 1.0
@@ -171,7 +171,7 @@ def build_config():
     config["evaluation_interval"] = 1000000
     config["evaluation_duration"] = 1
     config["use_lstm"] = False
-    config["min_sample_timesteps_per_iteration"] = 400
+    config["min_sample_timesteps_per_iteration"] = 500
     config["env"] = swimmer_gym
     return config
 
@@ -225,6 +225,8 @@ def render_frame(
     shape_anchor_penalty,
     shape_error,
     prev_shape_error,
+    trend_weight,
+    anchor_weight,
     delta_x,
     delta_y,
     err_x,
@@ -275,6 +277,7 @@ def render_frame(
             f"Anchor: {shape_anchor_penalty:.4f}",
             f"ShapeErr: {shape_error:.4f}",
             f"PrevShapeErr: {prev_shape_error:.4f}",
+            f"TrendW: {trend_weight:.3f}, AnchorW: {anchor_weight:.3f}",
             f"dX: {delta_x:.4f}, dY: {delta_y:.4f}",
             f"ErrX: {err_x:.4f}, ErrY: {err_y:.4f}",
             f"Buffer: {queue_fill}/{queue_capacity}",
@@ -313,6 +316,8 @@ def compute_macro_package(agent, env, obs):
         "shape_anchor_penalty": env.last_shape_anchor_penalty,
         "shape_error": env.last_shape_error,
         "prev_shape_error": env.last_prev_shape_error,
+        "trend_weight": env.last_trend_weight,
+        "anchor_weight": env.last_anchor_weight,
         "delta_x": env.last_delta_x,
         "delta_y": env.last_delta_y,
         "err_x": env.last_err_x,
@@ -414,6 +419,8 @@ def main():
         shape_anchor_penalty=0.0,
         shape_error=0.0,
         prev_shape_error=0.0,
+        trend_weight=0.0,
+        anchor_weight=1.0,
         delta_x=0.0,
         delta_y=0.0,
         err_x=0.0,
@@ -473,6 +480,7 @@ def main():
                 f"trend={package['shape_trend_reward']:.4f} | "
                 f"anchor={package['shape_anchor_penalty']:.4f} | "
                 f"shape_err={package['shape_error']:.4f} prev_shape_err={package['prev_shape_error']:.4f} | "
+                f"trend_w={package['trend_weight']:.3f} anchor_w={package['anchor_weight']:.3f} | "
                 f"dX={package['delta_x']:.4f} dY={package['delta_y']:.4f} | "
                 f"err_x={package['err_x']:.4f} err_y={package['err_y']:.4f}"
             )
@@ -494,6 +502,8 @@ def main():
                     shape_anchor_penalty=package["shape_anchor_penalty"],
                     shape_error=package["shape_error"],
                     prev_shape_error=package["prev_shape_error"],
+                    trend_weight=package["trend_weight"],
+                    anchor_weight=package["anchor_weight"],
                     delta_x=package["delta_x"],
                     delta_y=package["delta_y"],
                     err_x=package["err_x"],

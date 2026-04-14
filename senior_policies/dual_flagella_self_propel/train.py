@@ -43,6 +43,8 @@ class TrainingMetricsCallback(DefaultCallbacks):
         episode.custom_metrics["err_y"] = float(getattr(env_ref, "last_err_y", 0.0))
         episode.custom_metrics["shape_error"] = float(getattr(env_ref, "last_shape_error", 0.0))
         episode.custom_metrics["prev_shape_error"] = float(getattr(env_ref, "last_prev_shape_error", 0.0))
+        episode.custom_metrics["trend_weight"] = float(getattr(env_ref, "last_trend_weight", 0.0))
+        episode.custom_metrics["anchor_weight"] = float(getattr(env_ref, "last_anchor_weight", 0.0))
         episode.custom_metrics["delta_x"] = float(getattr(env_ref, "last_delta_x", 0.0))
         episode.custom_metrics["delta_y"] = float(getattr(env_ref, "last_delta_y", 0.0))
         episode.custom_metrics["macro_action_id"] = float(getattr(env_ref, "last_macro_action", 0))
@@ -130,7 +132,7 @@ def build_ppo_config(cli_args):
     config["lambda_"] = 0.95
     config["kl_coeff"] = 0.2
     config["sgd_minibatch_size"] = 100
-    config["train_batch_size"] = 400
+    config["train_batch_size"] = 500
     config["num_sgd_iter"] = 10
     config["shuffle_sequences"] = True
     config["vf_loss_coeff"] = 1.0
@@ -143,7 +145,7 @@ def build_ppo_config(cli_args):
     config["evaluation_interval"] = 1000000
     config["evaluation_duration"] = 1
     config["use_lstm"] = False
-    config["min_sample_timesteps_per_iteration"] = 400
+    config["min_sample_timesteps_per_iteration"] = 500
     config["callbacks"] = TrainingMetricsCallback
     return config
 
@@ -161,6 +163,9 @@ def write_training_run_markdown(run_dir, cli_args, trainer_config):
         "shape_error_y_weight": swimmer_module.SHAPE_ERROR_Y_WEIGHT,
         "shape_trend_reward_coef": swimmer_module.SHAPE_TREND_REWARD_COEF,
         "shape_anchor_penalty_coef": swimmer_module.SHAPE_ANCHOR_PENALTY_COEF,
+        "shape_trend_fade_low": swimmer_module.SHAPE_TREND_FADE_LOW,
+        "shape_trend_fade_high": swimmer_module.SHAPE_TREND_FADE_HIGH,
+        "shape_anchor_near_multiplier": swimmer_module.SHAPE_ANCHOR_NEAR_MULTIPLIER,
         "observation_dim": 14,
         "macro_action_num": len(MACRO_ACTION_TABLE),
         "macro_action_table": MACRO_ACTION_TABLE,

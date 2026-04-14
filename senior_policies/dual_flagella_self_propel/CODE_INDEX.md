@@ -141,20 +141,20 @@ reward = forward_reward + shape_trend_reward + shape_anchor_penalty
 当前双体高层分支已经切到更短的 episode 尺度：
 
 - `LOW_LEVEL_HOLD_STEPS = 25`
-- `MACRO_HORIZON = 20`
+- `MACRO_HORIZON = 50`
 
 这意味着：
 
-- 每个高层 episode 只包含 `20` 个宏步
+- 每个高层 episode 只包含 `50` 个宏步
 - 每个宏步仍固定执行 `25` 个底层子步
-- 所以每个 episode 的总底层步数变为 `20 * 25 = 500`
+- 所以每个 episode 的总底层步数变为 `50 * 25 = 1250`
 
 为匹配这个更短的时间尺度，训练采样参数同步调整为：
 
-- `horizon = 20`
-- `rollout_fragment_length = 20`
-- `train_batch_size = 400`
-- `min_sample_timesteps_per_iteration = 400`
+- `horizon = 50`
+- `rollout_fragment_length = 50`
+- `train_batch_size = 500`
+- `min_sample_timesteps_per_iteration = 500`
 
 当前 reward 常量为：
 
@@ -165,6 +165,28 @@ reward = forward_reward + shape_trend_reward + shape_anchor_penalty
 - `SHAPE_ERROR_Y_WEIGHT = 20.0`
 - `SHAPE_TREND_REWARD_COEF = 10.0`
 - `SHAPE_ANCHOR_PENALTY_COEF = 0.2`
+- `SHAPE_TREND_FADE_LOW = 3.0`
+- `SHAPE_TREND_FADE_HIGH = 8.0`
+- `SHAPE_ANCHOR_NEAR_MULTIPLIER = 2.0`
+
+接近目标队形时，reward 还会做平滑门控：
+
+```python
+trend_weight = 0.0                      if shape_error <= 3.0
+trend_weight = 1.0                      if shape_error >= 8.0
+trend_weight = linear interpolation     if 3.0 < shape_error < 8.0
+
+anchor_weight = 0.5 + 1.5 * (1.0 - trend_weight)
+
+trend_reward = trend_weight * base_trend_reward
+anchor_penalty = anchor_weight * base_anchor_penalty
+```
+
+也就是说：
+
+- 远离目标时，保留强纠偏的 `trend`
+- 接近目标时，逐步关闭 `trend`
+- 同时把 `anchor_weight` 从 `0.5` 平滑提高到 `2.0`，鼓励稳住队形而不是反复刷“回正奖励”
 
 ## 11. 可视化连续播放开关（2026-04-14）
 

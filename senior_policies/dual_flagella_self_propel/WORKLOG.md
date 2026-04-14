@@ -168,3 +168,32 @@
 - 启动时会明确打印当前播放模式是“reset-free visualization rollover”还是普通 episode reset
 - 未决问题：这种连续播放只能说明策略在训练边界外的滚动表现，不等同于已经做了真正的 reset-free 训练。
 - 下一步：实际播放长于 20 宏步的轨迹，观察编队是否在训练分布外继续稳定。
+## Entry 015
+- 时间：2026-04-14
+- 本轮目标：把双体 reward 改成“trend 平滑衰减 + anchor 平滑增强”，并把单局高层步数提到 50。
+- 关键发现：
+- 固定强度的 `trend_reward` 在接近目标队形后仍会鼓励策略来回扰动，以刷“误差下降”的奖励。
+- 根据当前日志量级，`shape_error` 在前期大约会从接近 30 下降到 1.x，适合把平滑过渡区放在 `2~8` 之间。
+- 涉及文件：`swimmer.py`、`train.py`、`visualize_dual_flagella.py`、`CODE_INDEX.md`
+- 实际改动：
+- 新增 `SHAPE_TREND_FADE_LOW=2.0`、`SHAPE_TREND_FADE_HIGH=8.0`、`SHAPE_ANCHOR_NEAR_MULTIPLIER=4.0`
+- `trend_reward` 现在乘以 `trend_weight`
+- `anchor_penalty` 现在乘以 `anchor_weight`
+- 日志、TensorBoard、可视化同步新增 `trend_weight / anchor_weight`
+- `MACRO_HORIZON` 从 `20` 改为 `50`
+- 训练采样参数同步改为 `horizon=50`、`rollout_fragment_length=50`、`train_batch_size=500`、`min_sample_timesteps_per_iteration=500`
+- 未决问题：如果后续在目标附近仍有明显抖动，下一步应考虑动作切换代价，而不是继续单纯加大 anchor。
+- 下一步：重新训练并重点观察 `trend_weight` 是否随 `shape_error` 下降而平滑收缩到接近 0。
+## Entry 016
+- 时间：2026-04-14
+- 本轮目标：进一步放宽近目标区门控，让 trend 更早退出，并减弱 anchor 的最大放大量。
+- 关键发现：
+- 你希望在更接近理想队形之后，就尽快停止用 `trend` 刺激来回修正。
+- 同时 anchor 也不需要再放大到 4 倍，改成 `0.5 -> 2.0` 的范围更温和。
+- 涉及文件：`swimmer.py`、`CODE_INDEX.md`
+- 实际改动：
+- `SHAPE_TREND_FADE_LOW` 从 `2.0` 改为 `3.0`
+- `anchor_weight` 改成 `0.5 + 1.5 * (1 - trend_weight)`
+- 对应文档说明同步更新
+- 未决问题：现在近目标区对 anchor 的基础权重其实低于 1，需要重新观察这是否会让编队稳定性不足。
+- 下一步：重点看 `shape_error < 3` 区域里，队形是否更稳，还是会因为 anchor 偏弱而继续漂移。
