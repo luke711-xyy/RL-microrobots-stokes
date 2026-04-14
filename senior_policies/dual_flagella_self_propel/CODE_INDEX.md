@@ -107,3 +107,31 @@ reward = avg_dx - |delta_x - 0| - 2 * |delta_y - 4|
 - 当前双体高层环境不再采用 reset-free。
 - 每个 episode 开始时，两个机器人都会硬重置回固定起点 `ROBOT1_INIT=(-4, 0.2)` 和 `ROBOT2_INIT=(-4, -0.2)`。
 - 底层 primitive 的 recurrent state、质心轨迹缓存和上一回合的 reward 诊断字段也会随之清空。
+
+## 9. 当前 Reward 语义更新（2026-04-14）
+
+当前双体高层 reward 已从“直接惩罚当前相对距离偏差”改为“三项分解”：
+
+```python
+err_x = abs(delta_x - FORMATION_TARGET_DX)
+err_y = abs(delta_y - FORMATION_TARGET_DY)
+shape_error = SHAPE_ERROR_X_WEIGHT * err_x + SHAPE_ERROR_Y_WEIGHT * err_y
+
+forward_reward = FORWARD_REWARD_COEF * avg_dx
+shape_trend_reward = SHAPE_TREND_REWARD_COEF * (prev_shape_error - shape_error)
+shape_anchor_penalty = -SHAPE_ANCHOR_PENALTY_COEF * shape_error
+
+reward = forward_reward + shape_trend_reward + shape_anchor_penalty
+```
+
+当前环境里需要重点看的诊断字段：
+
+- `last_forward_reward`：两个机器人当前宏步平均 x 前进收益
+- `last_shape_trend_reward`：相对上一个宏步，编队误差是否在改善
+- `last_shape_anchor_penalty`：当前编队误差本身的锚定惩罚
+- `last_shape_error`：当前加权编队误差
+- `last_prev_shape_error`：上一宏步的加权编队误差
+- `last_err_x`：当前 `Δx` 相对目标的绝对误差
+- `last_err_y`：当前 `Δy` 相对目标的绝对误差
+
+训练回调和 TensorBoard 现在也按这组字段写入，不再使用旧的 `dx_penalty / dy_penalty` 命名。

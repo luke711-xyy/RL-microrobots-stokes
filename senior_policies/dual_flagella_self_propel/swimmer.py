@@ -11,7 +11,7 @@ from gym import spaces
 from gym.utils import seeding
 from ray.rllib.policy.policy import Policy
 
-from calculate_v import N as SOLVER_N, NL as PRIMITIVE_LINK_NUM, RK_dual
+from calculate_v import NL as PRIMITIVE_LINK_NUM, RK_dual
 
 
 directory_path = os.getcwd()
@@ -22,10 +22,8 @@ MAX_STEP = 10000
 DT = 0.01
 
 # 这里要明确区分两套 N：
-# 1. 求解器里的 SOLVER_N=40，是流体离散后的几何/力点数量；
-# 2. 强化学习里的 PRIMITIVE_LINK_NUM=10，是底层 primitive checkpoint 看到的关节数量。
-# 双机器人高层环境必须沿用底层 primitive 的 10 段状态定义，
-# 不能把求解器离散数 40 直接拿来当底层策略的观测维度。
+# 1. 求解器里的离散点数不等于强化学习看到的 primitive 关节数。
+# 2. 双体高层环境必须沿用底层 primitive 的状态定义，不能把求解器离散数直接当作动作/观测维度。
 ENV_LINK_NUM = PRIMITIVE_LINK_NUM
 
 ACTION_LOW = -1
@@ -38,8 +36,10 @@ MACRO_HORIZON = 200
 FORMATION_TARGET_DX = 0.0
 FORMATION_TARGET_DY = 4.0
 FORWARD_REWARD_COEF = 1.0
-DELTA_X_PENALTY_COEF = 1.0
-DELTA_Y_PENALTY_COEF = 2.0
+SHAPE_ERROR_X_WEIGHT = 1.0
+SHAPE_ERROR_Y_WEIGHT = 2.0
+SHAPE_TREND_REWARD_COEF = 4.0
+SHAPE_ANCHOR_PENALTY_COEF = 0.5
 
 ROBOT1_INIT = (-4.0, 0.2)
 ROBOT2_INIT = (-4.0, -0.2)
@@ -195,8 +195,12 @@ class swimmer_gym(gym.Env):
         self.done = False
 
         self.last_forward_reward = 0.0
-        self.last_dx_penalty = 0.0
-        self.last_dy_penalty = 0.0
+        self.last_shape_trend_reward = 0.0
+        self.last_shape_anchor_penalty = 0.0
+        self.last_err_x = 0.0
+        self.last_err_y = 0.0
+        self.last_shape_error = 0.0
+        self.last_prev_shape_error = 0.0
         self.last_delta_x = 0.0
         self.last_delta_y = 0.0
         self.last_macro_action = 0
@@ -226,16 +230,14 @@ class swimmer_gym(gym.Env):
         for i in range(ENV_LINK_NUM + 1):
             Xp[i] = x_first[0] + i / ENV_LINK_NUM * math.cos(state[2])
             Yp[i] = x_first[1] + i / ENV_LINK_NUM * math.sin(state[2])
-        XY_positions = np.concatenate((Xp.reshape(-1, 1), Yp.reshape(-1, 1)), axis=1)
+        xy_positions = np.concatenate((Xp.reshape(-1, 1), Yp.reshape(-1, 1)), axis=1)
 
-        true_centroid = compute_true_centroid(XY_positions)
+        true_centroid = compute_true_centroid(xy_positions)
         state[0] = true_centroid[0]
         state[1] = true_centroid[1]
-        return state, x_first, XY_positions
+        return state, x_first, xy_positions
 
     def _build_initial_geometry(self):
-        # 两个机器人只在环境第一次建立时做硬初始化；
-        # 后续 reset 维持 reset-free 语义，只清计数器，不回到初始几何状态。
         self.state1, self.Xfirst1, self.XY_positions1 = self._build_initial_robot_state(ROBOT1_INIT)
         self.state2, self.Xfirst2, self.XY_positions2 = self._build_initial_robot_state(ROBOT2_INIT)
 
@@ -250,11 +252,18 @@ class swimmer_gym(gym.Env):
         self.trace2.clear()
         self.trace1.append(np.array(centroid1))
         self.trace2.append(np.array(centroid2))
+
         self.last_forward_reward = 0.0
-        self.last_dx_penalty = 0.0
-        self.last_dy_penalty = 0.0
         self.last_delta_x = centroid1[0] - centroid2[0]
         self.last_delta_y = centroid1[1] - centroid2[1]
+        self.last_err_x = abs(self.last_delta_x - FORMATION_TARGET_DX)
+        self.last_err_y = abs(self.last_delta_y - FORMATION_TARGET_DY)
+        self.last_shape_error = (
+            SHAPE_ERROR_X_WEIGHT * self.last_err_x + SHAPE_ERROR_Y_WEIGHT * self.last_err_y
+        )
+        self.last_prev_shape_error = self.last_shape_error
+        self.last_shape_trend_reward = 0.0
+        self.last_shape_anchor_penalty = 0.0
         self.last_macro_action = 0
         self.last_macro_action_names = MACRO_ACTION_TABLE[0]
         self.last_substep_frames = [self._capture_substep_frame(0)]
@@ -286,8 +295,7 @@ class swimmer_gym(gym.Env):
             self.low_level_policies[primitive_name] = restore_policy(ckpt_path)
 
     def _get_obs(self):
-        # 高层观测只放摘要量，不直接把散点云塞进 PPO：
-        # 质心、平均朝向、当前 primitive one-hot、以及两个机器人间的相对位形。
+        # 高层观测只放摘要量，不直接把散点云喂进 PPO。
         centroid1 = compute_true_centroid(self.XY_positions1)
         centroid2 = compute_true_centroid(self.XY_positions2)
         avg_heading1 = compute_average_heading(self.state1)
@@ -409,8 +417,10 @@ class swimmer_gym(gym.Env):
         reward_row = np.array(
             [
                 self.last_forward_reward,
-                self.last_dx_penalty,
-                self.last_dy_penalty,
+                self.last_shape_trend_reward,
+                self.last_shape_anchor_penalty,
+                self.last_shape_error,
+                self.last_prev_shape_error,
             ],
             dtype=np.float64,
         )
@@ -454,7 +464,7 @@ class swimmer_gym(gym.Env):
         centroid2_start = compute_true_centroid(self.XY_positions2)
         self.last_substep_frames = []
 
-        # 一个高层宏动作固定保持 25 个底层子步。
+        # 高层每个宏动作固定保持若干个底层子步。
         for substep_index in range(self.low_level_hold_steps):
             action1 = self._compute_low_level_action(0, primitive1)
             action2 = self._compute_low_level_action(1, primitive2)
@@ -474,23 +484,36 @@ class swimmer_gym(gym.Env):
         self.last_forward_reward = FORWARD_REWARD_COEF * (
             0.5 * ((centroid1_end[0] - centroid1_start[0]) + (centroid2_end[0] - centroid2_start[0]))
         )
-        self.last_dx_penalty = -DELTA_X_PENALTY_COEF * abs(self.last_delta_x - FORMATION_TARGET_DX)
-        self.last_dy_penalty = -DELTA_Y_PENALTY_COEF * abs(self.last_delta_y - FORMATION_TARGET_DY)
+        self.last_err_x = abs(self.last_delta_x - FORMATION_TARGET_DX)
+        self.last_err_y = abs(self.last_delta_y - FORMATION_TARGET_DY)
+        self.last_prev_shape_error = self.last_shape_error
+        self.last_shape_error = SHAPE_ERROR_X_WEIGHT * self.last_err_x + SHAPE_ERROR_Y_WEIGHT * self.last_err_y
+        self.last_shape_trend_reward = SHAPE_TREND_REWARD_COEF * (
+            self.last_prev_shape_error - self.last_shape_error
+        )
+        self.last_shape_anchor_penalty = -SHAPE_ANCHOR_PENALTY_COEF * self.last_shape_error
 
-        # 高层 reward = 整体前进 - 编队在 x / y 方向上的偏离代价。
-        macro_reward = self.last_forward_reward + self.last_dx_penalty + self.last_dy_penalty
+        # 高层 reward = 整体前进 + 编队误差改善趋势 + 当前形态锚定项。
+        macro_reward = (
+            self.last_forward_reward
+            + self.last_shape_trend_reward
+            + self.last_shape_anchor_penalty
+        )
         self.reward += macro_reward
 
-        # 每一个高层环境步都打印，便于直接观察双机器人是否发生数值跳变。
+        # 每个高层环境步都打印一次，便于直接看编队误差是在改善还是恶化。
         print(
             f"[Macro {self.ep_step:>3d}] pair={primitive1}-{primitive2} | "
             f"Reward: {macro_reward:>9.4f}, "
             f"Forward: {self.last_forward_reward:>9.4f}, "
-            f"DxPen: {self.last_dx_penalty:>9.4f}, "
-            f"DyPen: {self.last_dy_penalty:>9.4f} | "
+            f"Trend: {self.last_shape_trend_reward:>9.4f}, "
+            f"Anchor: {self.last_shape_anchor_penalty:>9.4f}, "
+            f"ShapeErr: {self.last_shape_error:>9.4f}, "
+            f"PrevShapeErr: {self.last_prev_shape_error:>9.4f} | "
             f"R1: ({centroid1_end[0]:>10.4f}, {centroid1_end[1]:>10.4f}), "
             f"R2: ({centroid2_end[0]:>10.4f}, {centroid2_end[1]:>10.4f}) | "
-            f"dX: {self.last_delta_x:>10.4f}, dY: {self.last_delta_y:>10.4f}"
+            f"dX: {self.last_delta_x:>10.4f}, dY: {self.last_delta_y:>10.4f}, "
+            f"ErrX: {self.last_err_x:>9.4f}, ErrY: {self.last_err_y:>9.4f}"
         )
 
         self._record_macro_step(macro_reward)

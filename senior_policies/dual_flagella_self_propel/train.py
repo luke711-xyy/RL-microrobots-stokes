@@ -37,8 +37,12 @@ class TrainingMetricsCallback(DefaultCallbacks):
 
         env_ref = sub_envs[env_index]
         episode.custom_metrics["forward_reward"] = float(getattr(env_ref, "last_forward_reward", 0.0))
-        episode.custom_metrics["dx_penalty"] = float(getattr(env_ref, "last_dx_penalty", 0.0))
-        episode.custom_metrics["dy_penalty"] = float(getattr(env_ref, "last_dy_penalty", 0.0))
+        episode.custom_metrics["shape_trend_reward"] = float(getattr(env_ref, "last_shape_trend_reward", 0.0))
+        episode.custom_metrics["shape_anchor_penalty"] = float(getattr(env_ref, "last_shape_anchor_penalty", 0.0))
+        episode.custom_metrics["err_x"] = float(getattr(env_ref, "last_err_x", 0.0))
+        episode.custom_metrics["err_y"] = float(getattr(env_ref, "last_err_y", 0.0))
+        episode.custom_metrics["shape_error"] = float(getattr(env_ref, "last_shape_error", 0.0))
+        episode.custom_metrics["prev_shape_error"] = float(getattr(env_ref, "last_prev_shape_error", 0.0))
         episode.custom_metrics["delta_x"] = float(getattr(env_ref, "last_delta_x", 0.0))
         episode.custom_metrics["delta_y"] = float(getattr(env_ref, "last_delta_y", 0.0))
         episode.custom_metrics["macro_action_id"] = float(getattr(env_ref, "last_macro_action", 0))
@@ -153,8 +157,10 @@ def write_training_run_markdown(run_dir, cli_args, trainer_config):
         "formation_target_dx": swimmer_module.FORMATION_TARGET_DX,
         "formation_target_dy": swimmer_module.FORMATION_TARGET_DY,
         "forward_reward_coef": swimmer_module.FORWARD_REWARD_COEF,
-        "delta_x_penalty_coef": swimmer_module.DELTA_X_PENALTY_COEF,
-        "delta_y_penalty_coef": swimmer_module.DELTA_Y_PENALTY_COEF,
+        "shape_error_x_weight": swimmer_module.SHAPE_ERROR_X_WEIGHT,
+        "shape_error_y_weight": swimmer_module.SHAPE_ERROR_Y_WEIGHT,
+        "shape_trend_reward_coef": swimmer_module.SHAPE_TREND_REWARD_COEF,
+        "shape_anchor_penalty_coef": swimmer_module.SHAPE_ANCHOR_PENALTY_COEF,
         "observation_dim": 14,
         "macro_action_num": len(MACRO_ACTION_TABLE),
         "macro_action_table": MACRO_ACTION_TABLE,

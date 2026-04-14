@@ -127,3 +127,18 @@
 - 实际改动：`reset()` 现在会重新调用初始化几何逻辑，把两个机器人恢复到 `ROBOT1_INIT` 和 `ROBOT2_INIT`，同时清空轨迹与 reward 诊断字段；`TRAINING_PARAMS.md` 中的 `reset_behavior` 说明同步改为硬重置。
 - 未决问题：硬重置后训练分布会变窄，需要继续观察 reward 曲线是否更稳定。
 - 下一步：在新训练 run 的 `TRAINING_PARAMS.md` 中确认 reset 语义已经正确记录。
+## Entry 012
+- 时间：2026-04-14
+- 本轮目标：把双体编队 reward 从“当前距离偏差直接惩罚”改成“误差改善趋势 + 锚定项 + 前进项”，并同步训练回调指标。
+- 关键发现：
+- 直接对 `|Δx-目标|` 和 `|Δy-目标|` 做惩罚，只能看到当前偏差大小，不容易判断策略是在修正编队还是继续恶化。
+- 更适合当前高层控制语义的量，是“这一宏步之后的编队误差，相对上一宏步到底变好还是变坏”。
+- 涉及文件：`swimmer.py`、`train.py`、`CODE_INDEX.md`
+- 实际改动：
+- `swimmer.py` 改为记录 `forward_reward / shape_trend_reward / shape_anchor_penalty / shape_error / prev_shape_error / err_x / err_y`
+- 总 reward 现为 `forward + trend + anchor`
+- 终端日志从旧的 `DxPen / DyPen` 改成 `Trend / Anchor / ShapeErr / PrevShapeErr`
+- `train.py` 的 TensorBoard / custom_metrics 同步改为新字段命名
+- `TRAINING_PARAMS.md` 记录的环境参数同步改为新的 reward 系数
+- 未决问题：`SHAPE_TREND_REWARD_COEF=4.0` 与 `SHAPE_ANCHOR_PENALTY_COEF=0.5` 还需要结合实际训练曲线再看是否需要微调。
+- 下一步：重新启动训练，观察 TensorBoard 中 `shape_error` 与 `shape_trend_reward` 是否出现更清晰的改善趋势。
