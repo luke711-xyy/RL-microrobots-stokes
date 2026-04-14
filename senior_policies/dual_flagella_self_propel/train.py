@@ -159,7 +159,7 @@ def write_training_run_markdown(run_dir, cli_args, trainer_config):
         "macro_action_num": len(MACRO_ACTION_TABLE),
         "macro_action_table": MACRO_ACTION_TABLE,
         "low_level_primitives": swimmer_module.PRIMITIVE_NAMES,
-        "reset_behavior": "reset-free across episode boundaries",
+        "reset_behavior": "hard reset to fixed start poses each episode",
         "historical_plane_mapping": "kept consistent with maintained single-robot branch",
     }
 

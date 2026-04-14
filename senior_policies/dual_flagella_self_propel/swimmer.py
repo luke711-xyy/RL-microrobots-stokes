@@ -250,6 +250,14 @@ class swimmer_gym(gym.Env):
         self.trace2.clear()
         self.trace1.append(np.array(centroid1))
         self.trace2.append(np.array(centroid2))
+        self.last_forward_reward = 0.0
+        self.last_dx_penalty = 0.0
+        self.last_dy_penalty = 0.0
+        self.last_delta_x = centroid1[0] - centroid2[0]
+        self.last_delta_y = centroid1[1] - centroid2[1]
+        self.last_macro_action = 0
+        self.last_macro_action_names = MACRO_ACTION_TABLE[0]
+        self.last_substep_frames = [self._capture_substep_frame(0)]
 
     def _reset_policy_states(self):
         if self.skip_policy_load:
@@ -493,11 +501,11 @@ class swimmer_gym(gym.Env):
         return self._get_obs(), float(self.reward), self.done, {}
 
     def reset(self):
+        self._build_initial_geometry()
         self.reward = 0.0
         self.done = False
         self.ep_step = 0
         self.episode_count += 1
-        self.last_substep_frames = [self._capture_substep_frame(0)]
         return self._get_obs()
 
     def render(self):

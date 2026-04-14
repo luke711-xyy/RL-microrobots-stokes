@@ -102,3 +102,8 @@ reward = avg_dx - |delta_x - 0| - 2 * |delta_y - 4|
 - 不修正现有单机器人分支的历史平面映射问题，保持一致
 - 底层 checkpoint 由两个机器人共享，但每个机器人对每个 primitive 各自维护自己的 LSTM 隐状态
 - 当前高层环境默认采用 reset-free episode reset，只清空计数器，不恢复机器人几何状态
+## 8. Reset 行为更新
+
+- 当前双体高层环境不再采用 reset-free。
+- 每个 episode 开始时，两个机器人都会硬重置回固定起点 `ROBOT1_INIT=(-4, 0.2)` 和 `ROBOT2_INIT=(-4, -0.2)`。
+- 底层 primitive 的 recurrent state、质心轨迹缓存和上一回合的 reward 诊断字段也会随之清空。

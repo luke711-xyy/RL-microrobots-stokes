@@ -119,3 +119,11 @@
 - 实际改动：将 `LOW_LEVEL_HOLD_STEPS` 从 `100` 改为 `25`，将 `MACRO_HORIZON` 从 `50` 改为 `200`，保持每个 episode 总低层步数仍为 `5000`。
 - 未决问题：更频繁的高层动作切换可能改变编队控制难度，需要继续观察训练曲线和可视化表现。
 - 下一步：检查 `TRAINING_PARAMS.md` 和 TensorBoard 曲线是否反映新的宏步时间尺度。
+## Entry 011
+- 时间：2026-04-14
+- 本轮目标：把双体高层环境从 reset-free 改成每回合重置到固定出发点。
+- 关键发现：原来的 `reset()` 只清计数器，不重建机器人几何状态，导致回合之间会延续上一个 episode 的位置与姿态。
+- 涉及文件：`swimmer.py`、`train.py`、`CODE_INDEX.md`
+- 实际改动：`reset()` 现在会重新调用初始化几何逻辑，把两个机器人恢复到 `ROBOT1_INIT` 和 `ROBOT2_INIT`，同时清空轨迹与 reward 诊断字段；`TRAINING_PARAMS.md` 中的 `reset_behavior` 说明同步改为硬重置。
+- 未决问题：硬重置后训练分布会变窄，需要继续观察 reward 曲线是否更稳定。
+- 下一步：在新训练 run 的 `TRAINING_PARAMS.md` 中确认 reset 语义已经正确记录。
