@@ -130,7 +130,7 @@ def build_ppo_config(cli_args):
     config["lambda_"] = 0.95
     config["kl_coeff"] = 0.2
     config["sgd_minibatch_size"] = 100
-    config["train_batch_size"] = 800
+    config["train_batch_size"] = 400
     config["num_sgd_iter"] = 10
     config["shuffle_sequences"] = True
     config["vf_loss_coeff"] = 1.0
@@ -143,7 +143,7 @@ def build_ppo_config(cli_args):
     config["evaluation_interval"] = 1000000
     config["evaluation_duration"] = 1
     config["use_lstm"] = False
-    config["min_sample_timesteps_per_iteration"] = 500
+    config["min_sample_timesteps_per_iteration"] = 400
     config["callbacks"] = TrainingMetricsCallback
     return config
 

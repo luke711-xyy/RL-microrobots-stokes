@@ -142,3 +142,16 @@
 - `TRAINING_PARAMS.md` 记录的环境参数同步改为新的 reward 系数
 - 未决问题：`SHAPE_TREND_REWARD_COEF=4.0` 与 `SHAPE_ANCHOR_PENALTY_COEF=0.5` 还需要结合实际训练曲线再看是否需要微调。
 - 下一步：重新启动训练，观察 TensorBoard 中 `shape_error` 与 `shape_trend_reward` 是否出现更清晰的改善趋势。
+## Entry 013
+- 时间：2026-04-14
+- 本轮目标：同步你实测后的双体 reward 系数，并把高层 episode 从 200 步缩到 20 步。
+- 关键发现：
+- 原来的 `MACRO_HORIZON=200` 会让后半段轨迹明显发散，reward 容易持续积累成巨大负值，不利于高层策略收敛。
+- episode 变短后，采样参数如果还保持旧尺度，就会出现“环境已经按短局训练，更新却还按长局攒批次”的时间尺度不一致。
+- 涉及文件：`swimmer.py`、`train.py`、`CODE_INDEX.md`
+- 实际改动：
+- reward 常量改为 `FORMATION_TARGET_DY=2.0`、`FORWARD_REWARD_COEF=50.0`、`SHAPE_ERROR_X_WEIGHT=30.0`、`SHAPE_ERROR_Y_WEIGHT=20.0`、`SHAPE_TREND_REWARD_COEF=10.0`、`SHAPE_ANCHOR_PENALTY_COEF=0.2`
+- `MACRO_HORIZON` 从 `200` 改为 `20`，单回合总底层步数同步变为 `500`
+- 训练采样参数同步改为 `horizon=20`、`rollout_fragment_length=20`、`train_batch_size=400`、`min_sample_timesteps_per_iteration=400`
+- 未决问题：新 reward 系数明显更激进，需要重新观察 `episode_reward_mean` 和 `shape_error` 是否稳定下降。
+- 下一步：跑一轮新训练，看 20 步 episode 下是否还会在后半段出现明显失控游动。

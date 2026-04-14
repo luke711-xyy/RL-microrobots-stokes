@@ -135,3 +135,33 @@ reward = forward_reward + shape_trend_reward + shape_anchor_penalty
 - `last_err_y`：当前 `Δy` 相对目标的绝对误差
 
 训练回调和 TensorBoard 现在也按这组字段写入，不再使用旧的 `dx_penalty / dy_penalty` 命名。
+
+## 10. 当前训练尺度更新（2026-04-14）
+
+当前双体高层分支已经切到更短的 episode 尺度：
+
+- `LOW_LEVEL_HOLD_STEPS = 25`
+- `MACRO_HORIZON = 20`
+
+这意味着：
+
+- 每个高层 episode 只包含 `20` 个宏步
+- 每个宏步仍固定执行 `25` 个底层子步
+- 所以每个 episode 的总底层步数变为 `20 * 25 = 500`
+
+为匹配这个更短的时间尺度，训练采样参数同步调整为：
+
+- `horizon = 20`
+- `rollout_fragment_length = 20`
+- `train_batch_size = 400`
+- `min_sample_timesteps_per_iteration = 400`
+
+当前 reward 常量为：
+
+- `FORMATION_TARGET_DX = 0.0`
+- `FORMATION_TARGET_DY = 2.0`
+- `FORWARD_REWARD_COEF = 50.0`
+- `SHAPE_ERROR_X_WEIGHT = 30.0`
+- `SHAPE_ERROR_Y_WEIGHT = 20.0`
+- `SHAPE_TREND_REWARD_COEF = 10.0`
+- `SHAPE_ANCHOR_PENALTY_COEF = 0.2`
