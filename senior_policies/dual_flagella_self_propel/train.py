@@ -1,5 +1,6 @@
 import argparse
 import os
+import shutil
 from datetime import datetime
 from pprint import pformat
 
@@ -27,6 +28,9 @@ from swimmer import MACRO_ACTION_TABLE, swimmer_gym
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 POLICY_DIR = os.path.join(os.getcwd(), f"policy_{TIMESTAMP}")
 TENSORBOARD_DIR = os.path.join(POLICY_DIR, "tensorboard")
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+CURRENT_VISUALIZER = os.path.join(CURRENT_DIR, "visualize_dual_flagella.py")
+CURRENT_SWIMMER = os.path.join(CURRENT_DIR, "swimmer.py")
 
 
 class TrainingMetricsCallback(DefaultCallbacks):
@@ -150,7 +154,7 @@ def build_ppo_config(cli_args):
     return config
 
 
-def write_training_run_markdown(run_dir, cli_args, trainer_config):
+def write_training_run_markdown(run_dir, cli_args, trainer_config, visualizer_snapshot_path, swimmer_snapshot_path):
     env_params = {
         "robot1_init": swimmer_module.ROBOT1_INIT,
         "robot2_init": swimmer_module.ROBOT2_INIT,
@@ -166,6 +170,8 @@ def write_training_run_markdown(run_dir, cli_args, trainer_config):
         "shape_trend_fade_low": swimmer_module.SHAPE_TREND_FADE_LOW,
         "shape_trend_fade_high": swimmer_module.SHAPE_TREND_FADE_HIGH,
         "shape_anchor_near_multiplier": swimmer_module.SHAPE_ANCHOR_NEAR_MULTIPLIER,
+        "visualizer_snapshot": visualizer_snapshot_path,
+        "swimmer_snapshot": swimmer_snapshot_path,
         "observation_dim": 14,
         "macro_action_num": len(MACRO_ACTION_TABLE),
         "macro_action_table": MACRO_ACTION_TABLE,
@@ -205,12 +211,28 @@ def write_training_run_markdown(run_dir, cli_args, trainer_config):
         handle.write("\n".join(lines) + "\n")
 
 
+def snapshot_current_visualizer(run_dir):
+    destination = os.path.join(run_dir, "visualize_dual_flagella.py")
+    shutil.copy2(CURRENT_VISUALIZER, destination)
+    return destination
+
+
+def snapshot_current_swimmer(run_dir):
+    destination = os.path.join(run_dir, "swimmer.py")
+    shutil.copy2(CURRENT_SWIMMER, destination)
+    return destination
+
+
 def main():
     os.makedirs(POLICY_DIR, exist_ok=True)
     os.makedirs(TENSORBOARD_DIR, exist_ok=True)
+    visualizer_snapshot_path = snapshot_current_visualizer(POLICY_DIR)
+    swimmer_snapshot_path = snapshot_current_swimmer(POLICY_DIR)
 
     print(f"Policy save dir: {POLICY_DIR}")
     print(f"TensorBoard log dir: {TENSORBOARD_DIR}")
+    print(f"Visualizer snapshot: {visualizer_snapshot_path}")
+    print(f"Swimmer snapshot: {swimmer_snapshot_path}")
     print(f"Ray CPUs: {args.num_cpus}, PyTorch threads: {args.num_threads}")
     print(f"Forward primitive: {args.forward_ckpt}")
     print(f"CW primitive: {args.cw_ckpt}")
@@ -221,7 +243,7 @@ def main():
 
     # 训练一开始就把所有高层关键参数写入 policy 根目录，便于后续复现实验。
     config = build_ppo_config(args)
-    write_training_run_markdown(POLICY_DIR, args, config)
+    write_training_run_markdown(POLICY_DIR, args, config, visualizer_snapshot_path, swimmer_snapshot_path)
 
     trainer = ppo.PPO(config=config, env=swimmer_gym)
     tb_writer = create_summary_writer(TENSORBOARD_DIR)

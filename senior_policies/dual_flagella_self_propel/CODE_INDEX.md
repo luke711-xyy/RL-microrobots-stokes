@@ -61,8 +61,8 @@
 | --- | --- | --- |
 | `LOW_LEVEL_HOLD_STEPS` | `25` | 每个宏动作持续的底层子步数 |
 | `MACRO_HORIZON` | `200` | 每个 episode 的宏步数 |
-| `ROBOT1_INIT` | `(-4, 2)` | 机器人 1 初始位置 |
-| `ROBOT2_INIT` | `(-4, -2)` | 机器人 2 初始位置 |
+| `ROBOT1_INIT` | `(4.0, -0.3)` | 机器人 1 初始位置 |
+| `ROBOT2_INIT` | `(4.0, 0.3)` | 机器人 2 初始位置 |
 | `FORMATION_TARGET_DX` | `0.0` | 编队目标相对 x 间距 |
 | `FORMATION_TARGET_DY` | `4.0` | 编队目标相对 y 间距 |
 | `FORWARD_REWARD_COEF` | `1.0` | 平均前进项权重 |
@@ -105,7 +105,7 @@ reward = avg_dx - |delta_x - 0| - 2 * |delta_y - 4|
 ## 8. Reset 行为更新
 
 - 当前双体高层环境不再采用 reset-free。
-- 每个 episode 开始时，两个机器人都会硬重置回固定起点 `ROBOT1_INIT=(-4, 0.2)` 和 `ROBOT2_INIT=(-4, -0.2)`。
+- 每个 episode 开始时，两个机器人都会硬重置回固定起点 `ROBOT1_INIT=(4.0, -0.3)` 和 `ROBOT2_INIT=(4.0, 0.3)`。
 - 底层 primitive 的 recurrent state、质心轨迹缓存和上一回合的 reward 诊断字段也会随之清空。
 
 ## 9. 当前 Reward 语义更新（2026-04-14）
@@ -204,3 +204,32 @@ anchor_penalty = anchor_weight * base_anchor_penalty
 
 - 训练仍然是硬重置 episode
 - `--reset_free_playback` 只用于观察短局训练出来的策略，在回合边界之外是否还能继续稳定推进和维持编队
+
+## 12. 可视化版本管理（2026-04-14）
+
+当前目录下保留两份双体可视化入口：
+
+- `visualize_dual_flagella.py`
+  作用：当前维护版，可视化当前最新 `swimmer.py` 语义，包括平滑的 trend/anchor 门控与 `trend_weight / anchor_weight` 诊断。
+- `visualize_dual_flagella_pre_smooth.py`
+  作用：从 commit `f471e7e` 回溯出的“平滑奖励转移前”版本，显式绑定 `swimmer_pre_smooth.py`，适合读取旧字段语义的高层策略结果。
+- `swimmer_pre_smooth.py`
+  作用：从 commit `f471e7e` 回溯出的旧环境语义版本，供 `visualize_dual_flagella_pre_smooth.py` 使用。
+
+从现在开始，`train.py` 还会在每次新训练启动时，同时复制：
+
+- 当前维护版 `visualize_dual_flagella.py`
+- 当前维护版 `swimmer.py`
+
+到对应的 `policy_<timestamp>` 目录中。
+
+这样做的目的：
+
+- 保证每次训练产物目录里都保留当时对应的一份可视化脚本
+- 保证每次训练产物目录里都保留当时对应的一份环境逻辑
+- 避免后续继续修改主干可视化后，旧策略目录找不到与其对应的查看入口
+
+注意：
+
+- 仅快照 `visualize` 不能 100% 复现旧环境语义
+- 当前已补上 `swimmer.py` 快照；如果后续还出现更深层语义漂移，再考虑继续快照更多运行时文件

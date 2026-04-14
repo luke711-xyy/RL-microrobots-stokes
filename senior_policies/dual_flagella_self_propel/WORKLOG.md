@@ -197,3 +197,43 @@
 - 对应文档说明同步更新
 - 未决问题：现在近目标区对 anchor 的基础权重其实低于 1，需要重新观察这是否会让编队稳定性不足。
 - 下一步：重点看 `shape_error < 3` 区域里，队形是否更稳，还是会因为 anchor 偏弱而继续漂移。
+## Entry 017
+- 时间：2026-04-14
+- 本轮目标：补一份“平滑奖励转移前”的双体可视化脚本，并让后续训练自动快照当前可视化代码到策略目录。
+- 关键发现：
+- 当前主干 `visualize_dual_flagella.py` 已绑定最新的 reward 诊断语义，旧策略若想按旧界面理解，最好直接用历史版本脚本查看。
+- 仅有主干可视化文件会带来版本漂移问题，所以需要在每次训练开始时把当时的可视化入口一起存进 `policy_<timestamp>` 目录。
+- 涉及文件：`visualize_dual_flagella_pre_smooth.py`、`train.py`、`CODE_INDEX.md`
+- 实际改动：
+- 从 commit `f471e7e` 回溯并生成本地文件 `visualize_dual_flagella_pre_smooth.py`
+- `train.py` 新增训练启动时自动复制当前 `visualize_dual_flagella.py` 到本次策略目录
+- 启动日志会打印 `Visualizer snapshot` 路径
+- 未决问题：如果以后要严格复现旧训练语义，仅快照 `visualize` 还不够，最好连 `swimmer.py` 也做版本快照。
+- 下一步：后续如果旧策略与当前环境语义继续分叉，再考虑同时快照 `swimmer.py`。
+## Entry 018
+- 时间：2026-04-14
+- 本轮目标：把旧版 `swimmer` 也补齐，并让后续训练同时快照 `visualize` 和 `swimmer`。
+- 关键发现：
+- 旧 `visualize` 如果仍然导入当前 `swimmer.py`，就只是“旧壳新芯”，无法真正对应历史策略的环境语义。
+- 训练目录里只快照 `visualize` 也不够，必须把同一时刻的 `swimmer.py` 一起存进去。
+- 涉及文件：`swimmer_pre_smooth.py`、`visualize_dual_flagella_pre_smooth.py`、`train.py`、`CODE_INDEX.md`
+- 实际改动：
+- 从 commit `f471e7e` 回溯生成 `swimmer_pre_smooth.py`
+- `visualize_dual_flagella_pre_smooth.py` 现在显式导入 `swimmer_pre_smooth`
+- `train.py` 训练启动时新增 `swimmer.py` 自动快照到 `policy_<timestamp>/swimmer.py`
+- `TRAINING_PARAMS.md` 现在会记录 `swimmer_snapshot` 路径
+- 未决问题：如果未来 `calculate_v.py` 也发生接口级变化，严格复现旧 run 可能还要把 solver 侧文件一起快照。
+- 下一步：如果你后面确认确实需要“按某次训练完整回放”，再把 `calculate_v.py` 也纳入快照列表。
+## Entry 019
+- 时间：2026-04-14
+- 本轮目标：把双体当前维护版的机器人初始位置改成 `(4.0, -0.3)` 和 `(4.0, 0.3)`，并连同前面未提交的改动一起收口。
+- 关键发现：
+- 当前维护版 `swimmer.py` 和 `CODE_INDEX.md` 中仍写着旧的起点信息，若不同时更新，后续训练参数记录会和文档脱节。
+- 历史回溯文件 `swimmer_pre_smooth.py` 需要保持原样，不能被当前实验配置污染。
+- 涉及文件：`swimmer.py`、`CODE_INDEX.md`
+- 实际改动：
+- `ROBOT1_INIT` 改为 `(4.0, -0.3)`
+- `ROBOT2_INIT` 改为 `(4.0, 0.3)`
+- 索引文档中的当前初始位置说明同步改为新值
+- 未决问题：新的起始相对位形与当前 `FORMATION_TARGET_DY=2.0` 相差较大，训练初期编队纠偏压力会更强。
+- 下一步：观察新起点下 `shape_error` 初值与回正速度是否仍在可接受范围内。
