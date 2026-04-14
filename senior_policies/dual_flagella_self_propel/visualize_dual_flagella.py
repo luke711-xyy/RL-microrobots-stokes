@@ -22,6 +22,11 @@ def parse_args():
     parser.add_argument("--num_threads", type=int, default=1, help="Number of PyTorch threads used by the solver (default: 1)")
     parser.add_argument("--view_range", type=float, default=5.0, help="Half-width of the camera-follow window (default: 5.0)")
     parser.add_argument(
+        "--reset_free_playback",
+        action="store_true",
+        help="Continue visualization across episode boundaries without resetting robot geometry",
+    )
+    parser.add_argument(
         "--prefetch_queue_size",
         type=int,
         default=10,
@@ -316,6 +321,13 @@ def compute_macro_package(agent, env, obs):
     return package
 
 
+def rollover_env_without_geometry_reset(env):
+    env.done = False
+    env.reward = 0.0
+    env.ep_step = 0
+    env.episode_count += 1
+
+
 def producer_loop(agent, env, initial_obs, output_queue, stop_event, total_steps):
     obs = initial_obs
     produced = 0
@@ -333,7 +345,10 @@ def producer_loop(agent, env, initial_obs, output_queue, stop_event, total_steps
             produced += 1
             obs = package["next_obs"]
             if package["done"]:
-                obs = env.reset()
+                if ARGS.reset_free_playback:
+                    rollover_env_without_geometry_reset(env)
+                else:
+                    obs = env.reset()
     except Exception:
         error_package = {
             "error": True,
@@ -371,6 +386,10 @@ def main():
 
     print(f"Loading senior checkpoint: {checkpoint}")
     print(f"Ray CPUs: {ARGS.num_cpus}, PyTorch threads: {ARGS.num_threads}")
+    print(
+        "Playback mode: "
+        + ("reset-free visualization rollover" if ARGS.reset_free_playback else "environment reset at episode boundary")
+    )
     agent.restore(str(checkpoint))
     print(">>> Checkpoint restore succeeded. Launching visualization window...")
 

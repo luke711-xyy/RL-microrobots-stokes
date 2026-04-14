@@ -165,3 +165,20 @@ reward = forward_reward + shape_trend_reward + shape_anchor_penalty
 - `SHAPE_ERROR_Y_WEIGHT = 20.0`
 - `SHAPE_TREND_REWARD_COEF = 10.0`
 - `SHAPE_ANCHOR_PENALTY_COEF = 0.2`
+
+## 11. 可视化连续播放开关（2026-04-14）
+
+双体可视化脚本支持：
+
+- `--reset_free_playback`
+
+其语义是：
+
+- 只在可视化端做“连续播放”
+- 当环境命中 `done=True` 的 episode 边界时，不调用 `env.reset()`
+- 只清空 `ep_step / done / reward` 等回合计数器，让机器人沿当前几何状态继续往前滚动
+
+注意这不会改变训练语义：
+
+- 训练仍然是硬重置 episode
+- `--reset_free_playback` 只用于观察短局训练出来的策略，在回合边界之外是否还能继续稳定推进和维持编队

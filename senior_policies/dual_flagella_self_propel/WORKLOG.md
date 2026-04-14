@@ -155,3 +155,16 @@
 - 训练采样参数同步改为 `horizon=20`、`rollout_fragment_length=20`、`train_batch_size=400`、`min_sample_timesteps_per_iteration=400`
 - 未决问题：新 reward 系数明显更激进，需要重新观察 `episode_reward_mean` 和 `shape_error` 是否稳定下降。
 - 下一步：跑一轮新训练，看 20 步 episode 下是否还会在后半段出现明显失控游动。
+## Entry 014
+- 时间：2026-04-14
+- 本轮目标：让双体可视化支持 reset-free 连续播放，避免每 20 个高层步回到起点。
+- 关键发现：
+- 当前重置来自高层可视化脚本的 `producer_loop()`，不是底层 primitive 分支的问题。
+- 训练环境已经改成硬重置，所以如果想连续观察泛化，最小改动应当只发生在可视化端。
+- 涉及文件：`visualize_dual_flagella.py`、`CODE_INDEX.md`
+- 实际改动：
+- 新增 CLI 开关 `--reset_free_playback`
+- 开启后命中 `done=True` 时不再调用 `env.reset()`，而是只清回合计数器并沿当前几何状态继续播放
+- 启动时会明确打印当前播放模式是“reset-free visualization rollover”还是普通 episode reset
+- 未决问题：这种连续播放只能说明策略在训练边界外的滚动表现，不等同于已经做了真正的 reset-free 训练。
+- 下一步：实际播放长于 20 宏步的轨迹，观察编队是否在训练分布外继续稳定。
