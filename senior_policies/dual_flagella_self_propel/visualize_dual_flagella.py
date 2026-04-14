@@ -142,22 +142,22 @@ def build_config():
     config["num_rollout_workers"] = 0
     config["framework"] = "torch"
     config["env_config"] = build_env_config(ARGS)
-    config["gamma"] = 0.9999
+    config["gamma"] = 0.995
     config["lr"] = 0.0003
-    config["horizon"] = 50
-    config["rollout_fragment_length"] = 50
+    config["horizon"] = MACRO_HORIZON
+    config["rollout_fragment_length"] = MACRO_HORIZON
     config["evaluation_duration"] = 10000000
     config["lr_schedule"] = None
     config["use_critic"] = True
     config["use_gae"] = True
     config["lambda_"] = 0.95
     config["kl_coeff"] = 0.2
-    config["sgd_minibatch_size"] = 50
-    config["train_batch_size"] = 500
+    config["sgd_minibatch_size"] = 100
+    config["train_batch_size"] = 400
     config["num_sgd_iter"] = 10
     config["shuffle_sequences"] = True
     config["vf_loss_coeff"] = 1.0
-    config["entropy_coeff"] = 0.0
+    config["entropy_coeff"] = 0.001
     config["entropy_coeff_schedule"] = None
     config["clip_param"] = 0.1
     config["vf_clip_param"] = 100000
@@ -166,7 +166,7 @@ def build_config():
     config["evaluation_interval"] = 1000000
     config["evaluation_duration"] = 1
     config["use_lstm"] = False
-    config["min_sample_timesteps_per_iteration"] = 500
+    config["min_sample_timesteps_per_iteration"] = 400
     config["env"] = swimmer_gym
     return config
 
@@ -216,10 +216,14 @@ def render_frame(
     primitive_pair,
     total_substeps,
     forward_reward,
-    dx_penalty,
-    dy_penalty,
+    shape_trend_reward,
+    shape_anchor_penalty,
+    shape_error,
+    prev_shape_error,
     delta_x,
     delta_y,
+    err_x,
+    err_y,
     queue_fill,
     queue_capacity,
 ):
@@ -262,9 +266,12 @@ def render_frame(
             f"Current primitive: {primitive_pair[0]} / {primitive_pair[1]}",
             f"Reward: {reward:.4f}",
             f"Forward: {forward_reward:.4f}",
-            f"Dx penalty: {dx_penalty:.4f}",
-            f"Dy penalty: {dy_penalty:.4f}",
+            f"Trend: {shape_trend_reward:.4f}",
+            f"Anchor: {shape_anchor_penalty:.4f}",
+            f"ShapeErr: {shape_error:.4f}",
+            f"PrevShapeErr: {prev_shape_error:.4f}",
             f"dX: {delta_x:.4f}, dY: {delta_y:.4f}",
+            f"ErrX: {err_x:.4f}, ErrY: {err_y:.4f}",
             f"Buffer: {queue_fill}/{queue_capacity}",
         ]
     )
@@ -297,10 +304,14 @@ def compute_macro_package(agent, env, obs):
         "frames": frames,
         "macro_pair": MACRO_ACTION_TABLE[action],
         "forward_reward": env.last_forward_reward,
-        "dx_penalty": env.last_dx_penalty,
-        "dy_penalty": env.last_dy_penalty,
+        "shape_trend_reward": env.last_shape_trend_reward,
+        "shape_anchor_penalty": env.last_shape_anchor_penalty,
+        "shape_error": env.last_shape_error,
+        "prev_shape_error": env.last_prev_shape_error,
         "delta_x": env.last_delta_x,
         "delta_y": env.last_delta_y,
+        "err_x": env.last_err_x,
+        "err_y": env.last_err_y,
     }
     return package
 
@@ -380,10 +391,14 @@ def main():
         primitive_pair=("forward", "forward"),
         total_substeps=1,
         forward_reward=0.0,
-        dx_penalty=0.0,
-        dy_penalty=0.0,
+        shape_trend_reward=0.0,
+        shape_anchor_penalty=0.0,
+        shape_error=0.0,
+        prev_shape_error=0.0,
         delta_x=0.0,
         delta_y=0.0,
+        err_x=0.0,
+        err_y=0.0,
         queue_fill=0,
         queue_capacity=max(1, ARGS.prefetch_queue_size),
     )
@@ -436,8 +451,11 @@ def main():
             print(
                 f"[Macro {macro_index:>3d}] action={action} ({macro_pair[0]}-{macro_pair[1]}) | "
                 f"reward={reward:.4f} | forward={package['forward_reward']:.4f} | "
-                f"dx_pen={package['dx_penalty']:.4f} | dy_pen={package['dy_penalty']:.4f} | "
-                f"dX={package['delta_x']:.4f} dY={package['delta_y']:.4f}"
+                f"trend={package['shape_trend_reward']:.4f} | "
+                f"anchor={package['shape_anchor_penalty']:.4f} | "
+                f"shape_err={package['shape_error']:.4f} prev_shape_err={package['prev_shape_error']:.4f} | "
+                f"dX={package['delta_x']:.4f} dY={package['delta_y']:.4f} | "
+                f"err_x={package['err_x']:.4f} err_y={package['err_y']:.4f}"
             )
 
             should_stop = False
@@ -453,10 +471,14 @@ def main():
                     primitive_pair=macro_pair,
                     total_substeps=len(package["frames"]),
                     forward_reward=package["forward_reward"],
-                    dx_penalty=package["dx_penalty"],
-                    dy_penalty=package["dy_penalty"],
+                    shape_trend_reward=package["shape_trend_reward"],
+                    shape_anchor_penalty=package["shape_anchor_penalty"],
+                    shape_error=package["shape_error"],
+                    prev_shape_error=package["prev_shape_error"],
                     delta_x=package["delta_x"],
                     delta_y=package["delta_y"],
+                    err_x=package["err_x"],
+                    err_y=package["err_y"],
                     queue_fill=package_queue.qsize(),
                     queue_capacity=preload_size,
                 )
