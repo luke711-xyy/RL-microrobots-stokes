@@ -1,0 +1,31 @@
+# `dual_flagellar_shared_policy` Worklog
+
+## Entry 001
+- 时间：2026-04-15
+- 本轮目标：从 `dual_flagella_self_propel` 平行新建真正的参数共享多智能体双体高层训练分支
+- 关键发现：
+  - 原双体高层分支虽然物理上是双机器人耦合，但训练上仍然是单 agent 联合动作控制
+  - 要实现“每个机器人独立决策但共享经验”，关键不是改求解器，而是把高层环境接口切到 RLlib `MultiAgentEnv`
+  - 第一版最稳妥的 reward 设计是保留旧双体团队奖励，并同时分配给两个 agent
+- 涉及文件：
+  - `swimmer.py`
+  - `train.py`
+  - `visualize_dual_flagella.py`
+  - `CODE_INDEX.md`
+  - `WORKLOG.md`
+- 实际改动：
+  - 新建目录 `senior_policies/dual_flagellar_shared_policy`
+  - 删除不需要的 `pre_smooth` 历史文件，避免与新分支语义混淆
+  - 将 `swimmer.py` 改为真正的 `MultiAgentEnv`
+  - 定义两个 agent：`robot_1`、`robot_2`
+  - 将每个 agent 的动作空间改为 `Discrete(3)`，分别选择 `forward/cw/ccw`
+  - 将每个 agent 的观测改为本地 12 维观测，而不是旧的 14 维 joint observation
+  - 在 `train.py` 中配置单一 `shared_policy`，让两个 agent 共享同一套高层权重
+  - 在 `visualize_dual_flagella.py` 中改为分别对两个 agent 调用共享策略，再组合成 `action_dict`
+  - 重写 `CODE_INDEX.md`，明确新旧双体分支的区别
+- 未决问题：
+  - 需要实际运行一次训练和可视化，确认 RLlib 当前版本对该 multi-agent 配置完全兼容
+  - 如训练出现样本计数或 env-checking 相关问题，需要再微调 `multiagent` 配置
+- 下一步：
+  - 执行静态检查和最小冒烟检查
+  - 如通过，再根据需要提交并推送
