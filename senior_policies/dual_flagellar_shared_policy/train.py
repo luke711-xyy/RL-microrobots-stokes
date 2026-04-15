@@ -44,17 +44,20 @@ class TrainingMetricsCallback(DefaultCallbacks):
             return
 
         env_ref = sub_envs[env_index]
-        episode.custom_metrics["forward_reward"] = float(getattr(env_ref, "last_forward_reward", 0.0))
-        episode.custom_metrics["shape_trend_reward"] = float(getattr(env_ref, "last_shape_trend_reward", 0.0))
-        episode.custom_metrics["shape_anchor_penalty"] = float(getattr(env_ref, "last_shape_anchor_penalty", 0.0))
-        episode.custom_metrics["err_x"] = float(getattr(env_ref, "last_err_x", 0.0))
-        episode.custom_metrics["err_y"] = float(getattr(env_ref, "last_err_y", 0.0))
-        episode.custom_metrics["shape_error"] = float(getattr(env_ref, "last_shape_error", 0.0))
-        episode.custom_metrics["prev_shape_error"] = float(getattr(env_ref, "last_prev_shape_error", 0.0))
-        episode.custom_metrics["trend_weight"] = float(getattr(env_ref, "last_trend_weight", 0.0))
-        episode.custom_metrics["anchor_weight"] = float(getattr(env_ref, "last_anchor_weight", 0.0))
-        episode.custom_metrics["delta_x"] = float(getattr(env_ref, "last_delta_x", 0.0))
-        episode.custom_metrics["delta_y"] = float(getattr(env_ref, "last_delta_y", 0.0))
+        episode.custom_metrics["robot_1_reward"] = float(getattr(env_ref, "last_robot_rewards", [0.0, 0.0])[0])
+        episode.custom_metrics["robot_2_reward"] = float(getattr(env_ref, "last_robot_rewards", [0.0, 0.0])[1])
+        episode.custom_metrics["robot_1_progress_reward"] = float(getattr(env_ref, "last_robot_progress_rewards", [0.0, 0.0])[0])
+        episode.custom_metrics["robot_2_progress_reward"] = float(getattr(env_ref, "last_robot_progress_rewards", [0.0, 0.0])[1])
+        episode.custom_metrics["robot_1_angle_penalty"] = float(getattr(env_ref, "last_robot_angle_penalties", [0.0, 0.0])[0])
+        episode.custom_metrics["robot_2_angle_penalty"] = float(getattr(env_ref, "last_robot_angle_penalties", [0.0, 0.0])[1])
+        episode.custom_metrics["robot_1_angle_error"] = float(getattr(env_ref, "last_robot_angle_errors", [0.0, 0.0])[0])
+        episode.custom_metrics["robot_2_angle_error"] = float(getattr(env_ref, "last_robot_angle_errors", [0.0, 0.0])[1])
+        episode.custom_metrics["robot_1_goal_distance"] = float(getattr(env_ref, "last_robot_goal_distances", [0.0, 0.0])[0])
+        episode.custom_metrics["robot_2_goal_distance"] = float(getattr(env_ref, "last_robot_goal_distances", [0.0, 0.0])[1])
+        episode.custom_metrics["robot_1_heading"] = float(getattr(env_ref, "last_robot_headings", [0.0, 0.0])[0])
+        episode.custom_metrics["robot_2_heading"] = float(getattr(env_ref, "last_robot_headings", [0.0, 0.0])[1])
+        episode.custom_metrics["robot_1_reached"] = float(getattr(env_ref, "last_robot_reached", [False, False])[0])
+        episode.custom_metrics["robot_2_reached"] = float(getattr(env_ref, "last_robot_reached", [False, False])[1])
         episode.custom_metrics["robot_1_action_id"] = float(getattr(env_ref, "last_macro_action", (0, 0))[0])
         episode.custom_metrics["robot_2_action_id"] = float(getattr(env_ref, "last_macro_action", (0, 0))[1])
         episode.custom_metrics["episode_steps"] = float(getattr(env_ref, "ep_step", 0))
@@ -182,16 +185,12 @@ def write_training_run_markdown(run_dir, cli_args, trainer_config, visualizer_sn
         "robot2_init": swimmer_module.ROBOT2_INIT,
         "macro_horizon": swimmer_module.MACRO_HORIZON,
         "low_level_hold_steps": swimmer_module.LOW_LEVEL_HOLD_STEPS,
-        "formation_target_dx": swimmer_module.FORMATION_TARGET_DX,
-        "formation_target_dy": swimmer_module.FORMATION_TARGET_DY,
-        "forward_reward_coef": swimmer_module.FORWARD_REWARD_COEF,
-        "shape_error_x_weight": swimmer_module.SHAPE_ERROR_X_WEIGHT,
-        "shape_error_y_weight": swimmer_module.SHAPE_ERROR_Y_WEIGHT,
-        "shape_trend_reward_coef": swimmer_module.SHAPE_TREND_REWARD_COEF,
-        "shape_anchor_penalty_coef": swimmer_module.SHAPE_ANCHOR_PENALTY_COEF,
-        "shape_trend_fade_low": swimmer_module.SHAPE_TREND_FADE_LOW,
-        "shape_trend_fade_high": swimmer_module.SHAPE_TREND_FADE_HIGH,
-        "shape_anchor_near_multiplier": swimmer_module.SHAPE_ANCHOR_NEAR_MULTIPLIER,
+        "goal_point": swimmer_module.GOAL_POINT.tolist(),
+        "goal_radius": swimmer_module.GOAL_RADIUS,
+        "nav_progress_reward_coef": swimmer_module.NAV_PROGRESS_REWARD_COEF,
+        "nav_angle_penalty_coef": swimmer_module.NAV_ANGLE_PENALTY_COEF,
+        "nav_reach_bonus": swimmer_module.NAV_REACH_BONUS,
+        "heading_definition": "compute_average_heading(state)",
         "visualizer_snapshot": visualizer_snapshot_path,
         "swimmer_snapshot": swimmer_snapshot_path,
         "robot_ids": ROBOT_IDS,
@@ -199,7 +198,9 @@ def write_training_run_markdown(run_dir, cli_args, trainer_config, visualizer_sn
         "observation_dim_per_agent": swimmer_module.OBSERVATION_DIM,
         "action_dim_per_agent": len(PRIMITIVE_NAMES),
         "primitive_names": PRIMITIVE_NAMES,
-        "reward_mode": "shared team reward copied to both agents",
+        "task_mode": "shared target-point navigation",
+        "reward_mode": "per-robot navigation reward",
+        "success_condition": "both robots reach GOAL_RADIUS",
         "reset_behavior": "hard reset to fixed start poses each episode",
         "historical_plane_mapping": "kept consistent with maintained single-robot branch",
     }

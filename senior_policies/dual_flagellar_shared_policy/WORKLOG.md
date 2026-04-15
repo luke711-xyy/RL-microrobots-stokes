@@ -2,11 +2,23 @@
 
 ## Entry 001
 - 时间：2026-04-15
-- 本轮目标：从 `dual_flagella_self_propel` 平行新建真正的参数共享多智能体双体高层训练分支
+- 本轮目标：从原双体单 agent 版本平行新建真正的参数共享多智能体高层训练分支
 - 关键发现：
-  - 原双体高层分支虽然物理上是双机器人耦合，但训练上仍然是单 agent 联合动作控制
-  - 要实现“每个机器人独立决策但共享经验”，关键不是改求解器，而是把高层环境接口切到 RLlib `MultiAgentEnv`
-  - 第一版最稳妥的 reward 设计是保留旧双体团队奖励，并同时分配给两个 agent
+  - 原双体高层分支虽然物理上是双机器人耦合，但训练上仍是单 agent 联合动作控制
+  - 要实现“每个机器人独立决策但共享经验”，关键是将高层环境接口切到 RLlib `MultiAgentEnv`
+- 实际改动：
+  - 新建 `senior_policies/dual_flagellar_shared_policy`
+  - 实现两个 agent 的 shared-policy 训练框架
+  - 保留双体联合流体求解与底层 primitive 调用方式
+- 未决问题：
+  - 后续需要根据训练表现继续迭代高层观测和 reward 设计
+
+## Entry 002
+- 时间：2026-04-15
+- 本轮目标：将新分支的高层观测和奖励从“编队保持”重构为“共享目标点导航”
+- 关键发现：
+  - 当前代码中的 `heading` 已有稳定定义：`compute_average_heading(state)`，适合直接沿用到导航任务
+  - 目标点导航第一版不需要再显式输入队友信息，可以先只保留“自身状态 + 相对目标向量”
 - 涉及文件：
   - `swimmer.py`
   - `train.py`
@@ -14,18 +26,23 @@
   - `CODE_INDEX.md`
   - `WORKLOG.md`
 - 实际改动：
-  - 新建目录 `senior_policies/dual_flagellar_shared_policy`
-  - 删除不需要的 `pre_smooth` 历史文件，避免与新分支语义混淆
-  - 将 `swimmer.py` 改为真正的 `MultiAgentEnv`
-  - 定义两个 agent：`robot_1`、`robot_2`
-  - 将每个 agent 的动作空间改为 `Discrete(3)`，分别选择 `forward/cw/ccw`
-  - 将每个 agent 的观测改为本地 12 维观测，而不是旧的 14 维 joint observation
-  - 在 `train.py` 中配置单一 `shared_policy`，让两个 agent 共享同一套高层权重
-  - 在 `visualize_dual_flagella.py` 中改为分别对两个 agent 调用共享策略，再组合成 `action_dict`
-  - 重写 `CODE_INDEX.md`，明确新旧双体分支的区别
+  - 将任务模式固定为共享目标点导航
+  - 每个 agent 的观测改为 8 维：
+    - 自己的质心坐标
+    - 平均几何朝向 heading
+    - 上一宏步动作 one-hot
+    - 相对目标向量
+  - 删除旧的编队趋势奖励
+  - 新增每个机器人的独立导航 reward：
+    - 位移投影奖励
+    - 角度平方惩罚
+    - 首次到达目标半径奖励
+  - 成功条件改为“双机器人都进入目标半径”
+  - TensorBoard、自定义日志和可视化面板全部改为导航语义
+  - 更新 `CODE_INDEX.md` 说明当前任务结构和常量
 - 未决问题：
-  - 需要实际运行一次训练和可视化，确认 RLlib 当前版本对该 multi-agent 配置完全兼容
-  - 如训练出现样本计数或 env-checking 相关问题，需要再微调 `multiagent` 配置
+  - 需要在训练环境中进一步验证当前奖励系数是否需要调优
+  - 如目标点位置或到达半径不合适，后续需要再做实验校准
 - 下一步：
-  - 执行静态检查和最小冒烟检查
-  - 如通过，再根据需要提交并推送
+  - 做静态检查
+  - 运行一次最小训练/可视化冒烟

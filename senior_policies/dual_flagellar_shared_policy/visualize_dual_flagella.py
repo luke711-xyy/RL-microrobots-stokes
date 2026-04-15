@@ -67,6 +67,8 @@ import ray
 import ray.rllib.algorithms.ppo as ppo
 
 from swimmer import (
+    GOAL_POINT,
+    GOAL_RADIUS,
     LOW_LEVEL_HOLD_STEPS,
     MACRO_HORIZON,
     PRIMITIVE_ID_TO_NAME,
@@ -240,26 +242,19 @@ def render_frame(
     macro_index,
     primitive_pair,
     total_substeps,
-    team_reward,
-    forward_reward,
-    shape_trend_reward,
-    shape_anchor_penalty,
-    shape_error,
-    prev_shape_error,
-    trend_weight,
-    anchor_weight,
-    delta_x,
-    delta_y,
-    err_x,
-    err_y,
+    robot_rewards,
+    robot_progress_rewards,
+    robot_angle_penalties,
+    robot_angle_errors,
+    robot_goal_distances,
+    robot_headings,
+    robot_reached,
     queue_fill,
     queue_capacity,
     append_trace=True,
 ):
     centroid1 = np.array(frame["centroid1"], copy=True)
     centroid2 = np.array(frame["centroid2"], copy=True)
-    heading1 = compute_average_heading(frame["state1"])
-    heading2 = compute_average_heading(frame["state2"])
     if append_trace:
         trace1.append(centroid1)
         trace2.append(centroid2)
@@ -269,6 +264,9 @@ def render_frame(
     ax.plot(frame["xy2"][:, 0], frame["xy2"][:, 1], color="tab:red", linewidth=2.5)
     ax.scatter([centroid1[0]], [centroid1[1]], color="tab:blue", s=40)
     ax.scatter([centroid2[0]], [centroid2[1]], color="tab:red", s=40)
+    ax.scatter([GOAL_POINT[0]], [GOAL_POINT[1]], color="gold", s=80, marker="*", edgecolors="black")
+    goal_circle = plt.Circle((GOAL_POINT[0], GOAL_POINT[1]), GOAL_RADIUS, color="gold", fill=False, alpha=0.5)
+    ax.add_patch(goal_circle)
 
     if len(trace1) > 1:
         trace1_np = np.array(trace1)
@@ -276,8 +274,8 @@ def render_frame(
         ax.plot(trace1_np[:, 0], trace1_np[:, 1], color="tab:blue", alpha=0.5, linewidth=1.0)
         ax.plot(trace2_np[:, 0], trace2_np[:, 1], color="tab:red", alpha=0.5, linewidth=1.0)
 
-    draw_heading(ax, centroid1, heading1, "tab:green")
-    draw_heading(ax, centroid2, heading2, "tab:green")
+    draw_heading(ax, centroid1, robot_headings[0], "tab:green")
+    draw_heading(ax, centroid2, robot_headings[1], "tab:green")
 
     center_x = 0.5 * (centroid1[0] + centroid2[0])
     center_y = 0.5 * (centroid1[1] + centroid2[1])
@@ -291,17 +289,15 @@ def render_frame(
         [
             f"Macro step: {macro_index}",
             f"Substep: {substep_index}/{total_substeps}",
+            f"Goal: ({GOAL_POINT[0]:.2f}, {GOAL_POINT[1]:.2f})  r={GOAL_RADIUS:.2f}",
             f"Robot 1 primitive: {primitive_pair[0]}",
             f"Robot 2 primitive: {primitive_pair[1]}",
-            f"Team reward: {team_reward:.4f}",
-            f"Forward: {forward_reward:.4f}",
-            f"Trend: {shape_trend_reward:.4f}",
-            f"Anchor: {shape_anchor_penalty:.4f}",
-            f"ShapeErr: {shape_error:.4f}",
-            f"PrevShapeErr: {prev_shape_error:.4f}",
-            f"TrendW: {trend_weight:.3f}, AnchorW: {anchor_weight:.3f}",
-            f"dX: {delta_x:.4f}, dY: {delta_y:.4f}",
-            f"ErrX: {err_x:.4f}, ErrY: {err_y:.4f}",
+            f"R1 reward: {robot_rewards[0]:.4f}, prog: {robot_progress_rewards[0]:.4f}",
+            f"R1 ang_pen: {robot_angle_penalties[0]:.4f}, ang_err: {robot_angle_errors[0]:.4f}",
+            f"R1 dist: {robot_goal_distances[0]:.4f}, heading: {robot_headings[0]:.4f}, reached: {int(robot_reached[0])}",
+            f"R2 reward: {robot_rewards[1]:.4f}, prog: {robot_progress_rewards[1]:.4f}",
+            f"R2 ang_pen: {robot_angle_penalties[1]:.4f}, ang_err: {robot_angle_errors[1]:.4f}",
+            f"R2 dist: {robot_goal_distances[1]:.4f}, heading: {robot_headings[1]:.4f}, reached: {int(robot_reached[1])}",
             f"Buffer: {queue_fill}/{queue_capacity}",
         ]
     )
@@ -315,7 +311,7 @@ def render_frame(
         fontsize=10,
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
     )
-    ax.set_title("Dual Flagella Shared-Policy Visualization")
+    ax.set_title("Dual Flagella Shared-Policy Navigation Visualization")
 
 
 def compute_agent_action(policy, obs):
@@ -339,22 +335,18 @@ def compute_macro_package(policy, env, obs_dict):
     frames = env.last_substep_frames if env.last_substep_frames else [capture_env_frame(env, env.low_level_hold_steps)]
     package = {
         "action_dict": dict(action_dict),
-        "team_reward": float(reward_dict[ROBOT_IDS[0]]),
         "done": bool(done_dict["__all__"]),
         "next_obs": next_obs,
         "frames": frames,
         "primitive_pair": tuple(primitive_pair),
-        "forward_reward": env.last_forward_reward,
-        "shape_trend_reward": env.last_shape_trend_reward,
-        "shape_anchor_penalty": env.last_shape_anchor_penalty,
-        "shape_error": env.last_shape_error,
-        "prev_shape_error": env.last_prev_shape_error,
-        "trend_weight": env.last_trend_weight,
-        "anchor_weight": env.last_anchor_weight,
-        "delta_x": env.last_delta_x,
-        "delta_y": env.last_delta_y,
-        "err_x": env.last_err_x,
-        "err_y": env.last_err_y,
+        "robot_rewards": list(env.last_robot_rewards),
+        "robot_progress_rewards": list(env.last_robot_progress_rewards),
+        "robot_angle_penalties": list(env.last_robot_angle_penalties),
+        "robot_angle_errors": list(env.last_robot_angle_errors),
+        "robot_goal_distances": list(env.last_robot_goal_distances),
+        "robot_headings": list(env.last_robot_headings),
+        "robot_reached": list(env.last_robot_reached),
+        "reward_dict": dict(reward_dict),
     }
     return package
 
@@ -425,18 +417,13 @@ def wait_for_queue_warmup(fig, ax, env, trace1, trace2, package_queue, warmup_st
                 macro_index=0,
                 primitive_pair=tuple(env.current_primitives),
                 total_substeps=max(1, env.low_level_hold_steps),
-                team_reward=0.0,
-                forward_reward=0.0,
-                shape_trend_reward=0.0,
-                shape_anchor_penalty=0.0,
-                shape_error=env.last_shape_error,
-                prev_shape_error=env.last_prev_shape_error,
-                trend_weight=env.last_trend_weight,
-                anchor_weight=env.last_anchor_weight,
-                delta_x=env.last_delta_x,
-                delta_y=env.last_delta_y,
-                err_x=env.last_err_x,
-                err_y=env.last_err_y,
+                robot_rewards=env.last_robot_rewards,
+                robot_progress_rewards=env.last_robot_progress_rewards,
+                robot_angle_penalties=env.last_robot_angle_penalties,
+                robot_angle_errors=env.last_robot_angle_errors,
+                robot_goal_distances=env.last_robot_goal_distances,
+                robot_headings=env.last_robot_headings,
+                robot_reached=env.last_robot_reached,
                 queue_fill=package_queue.qsize(),
                 queue_capacity=max(1, ARGS.prefetch_queue_size),
                 append_trace=False,
@@ -488,18 +475,13 @@ def main():
         macro_index=0,
         primitive_pair=("forward", "forward"),
         total_substeps=1,
-        team_reward=0.0,
-        forward_reward=0.0,
-        shape_trend_reward=0.0,
-        shape_anchor_penalty=0.0,
-        shape_error=env.last_shape_error,
-        prev_shape_error=env.last_prev_shape_error,
-        trend_weight=env.last_trend_weight,
-        anchor_weight=env.last_anchor_weight,
-        delta_x=env.last_delta_x,
-        delta_y=env.last_delta_y,
-        err_x=env.last_err_x,
-        err_y=env.last_err_y,
+        robot_rewards=env.last_robot_rewards,
+        robot_progress_rewards=env.last_robot_progress_rewards,
+        robot_angle_penalties=env.last_robot_angle_penalties,
+        robot_angle_errors=env.last_robot_angle_errors,
+        robot_goal_distances=env.last_robot_goal_distances,
+        robot_headings=env.last_robot_headings,
+        robot_reached=env.last_robot_reached,
         queue_fill=0,
         queue_capacity=max(1, ARGS.prefetch_queue_size),
     )
@@ -543,17 +525,17 @@ def main():
 
             macro_index += 1
             primitive_pair = package["primitive_pair"]
-            team_reward = package["team_reward"]
+            r1 = package["robot_rewards"][0]
+            r2 = package["robot_rewards"][1]
 
             print(
                 f"[Macro {macro_index:>3d}] pair={primitive_pair[0]}-{primitive_pair[1]} | "
-                f"reward={team_reward:.4f} | forward={package['forward_reward']:.4f} | "
-                f"trend={package['shape_trend_reward']:.4f} | "
-                f"anchor={package['shape_anchor_penalty']:.4f} | "
-                f"shape_err={package['shape_error']:.4f} prev_shape_err={package['prev_shape_error']:.4f} | "
-                f"trend_w={package['trend_weight']:.3f} anchor_w={package['anchor_weight']:.3f} | "
-                f"dX={package['delta_x']:.4f} dY={package['delta_y']:.4f} | "
-                f"err_x={package['err_x']:.4f} err_y={package['err_y']:.4f}"
+                f"R1 reward={r1:.4f}, prog={package['robot_progress_rewards'][0]:.4f}, "
+                f"ang_pen={package['robot_angle_penalties'][0]:.4f}, ang_err={package['robot_angle_errors'][0]:.4f}, "
+                f"dist={package['robot_goal_distances'][0]:.4f}, reached={int(package['robot_reached'][0])} | "
+                f"R2 reward={r2:.4f}, prog={package['robot_progress_rewards'][1]:.4f}, "
+                f"ang_pen={package['robot_angle_penalties'][1]:.4f}, ang_err={package['robot_angle_errors'][1]:.4f}, "
+                f"dist={package['robot_goal_distances'][1]:.4f}, reached={int(package['robot_reached'][1])}"
             )
 
             should_stop = False
@@ -566,18 +548,13 @@ def main():
                     macro_index=macro_index,
                     primitive_pair=primitive_pair,
                     total_substeps=len(package["frames"]),
-                    team_reward=team_reward,
-                    forward_reward=package["forward_reward"],
-                    shape_trend_reward=package["shape_trend_reward"],
-                    shape_anchor_penalty=package["shape_anchor_penalty"],
-                    shape_error=package["shape_error"],
-                    prev_shape_error=package["prev_shape_error"],
-                    trend_weight=package["trend_weight"],
-                    anchor_weight=package["anchor_weight"],
-                    delta_x=package["delta_x"],
-                    delta_y=package["delta_y"],
-                    err_x=package["err_x"],
-                    err_y=package["err_y"],
+                    robot_rewards=package["robot_rewards"],
+                    robot_progress_rewards=package["robot_progress_rewards"],
+                    robot_angle_penalties=package["robot_angle_penalties"],
+                    robot_angle_errors=package["robot_angle_errors"],
+                    robot_goal_distances=package["robot_goal_distances"],
+                    robot_headings=package["robot_headings"],
+                    robot_reached=package["robot_reached"],
                     queue_fill=package_queue.qsize(),
                     queue_capacity=preload_size,
                 )

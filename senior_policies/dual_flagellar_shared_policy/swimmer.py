@@ -1,10 +1,8 @@
 import math
 import os
 from collections import deque
-from os import path
 from pathlib import Path
 
-import gym
 import numpy as np
 from gym import spaces
 from gym.utils import seeding
@@ -16,10 +14,7 @@ from calculate_v import NL as PRIMITIVE_LINK_NUM, RK_dual
 
 directory_path = os.getcwd()
 
-MAX_STEP = 10000
 DT = 0.01
-
-# 求解器离散点数与高层 primitive 关节数沿用原双体分支约定。
 ENV_LINK_NUM = PRIMITIVE_LINK_NUM
 
 ACTION_LOW = -1
@@ -28,16 +23,11 @@ ACTION_HIGH = 1
 LOW_LEVEL_HOLD_STEPS = 25
 MACRO_HORIZON = 50
 
-FORMATION_TARGET_DX = 0.0
-FORMATION_TARGET_DY = 2.0
-FORWARD_REWARD_COEF = 50.0
-SHAPE_ERROR_X_WEIGHT = 30.0
-SHAPE_ERROR_Y_WEIGHT = 20.0
-SHAPE_TREND_REWARD_COEF = 10.0
-SHAPE_ANCHOR_PENALTY_COEF = 0.2
-SHAPE_TREND_FADE_LOW = 3.0
-SHAPE_TREND_FADE_HIGH = 8.0
-SHAPE_ANCHOR_NEAR_MULTIPLIER = 2.0
+GOAL_POINT = np.array([8.0, 0.0], dtype=np.float64)
+GOAL_RADIUS = 0.3
+NAV_PROGRESS_REWARD_COEF = 50.0
+NAV_ANGLE_PENALTY_COEF = 10.0
+NAV_REACH_BONUS = 20.0
 
 ROBOT1_INIT = (4.0, -0.3)
 ROBOT2_INIT = (4.0, 0.3)
@@ -46,7 +36,7 @@ ROBOT_IDS = ("robot_1", "robot_2")
 PRIMITIVE_NAMES = ("forward", "cw", "ccw")
 PRIMITIVE_TO_ID = {name: idx for idx, name in enumerate(PRIMITIVE_NAMES)}
 PRIMITIVE_ID_TO_NAME = {idx: name for name, idx in PRIMITIVE_TO_ID.items()}
-OBSERVATION_DIM = 12
+OBSERVATION_DIM = 8
 
 traj = []
 traj2 = []
@@ -75,18 +65,14 @@ def compute_average_heading(state_array):
     return angle_sum / (len(state_array) - 2)
 
 
-def compute_trend_weight(shape_error):
-    if shape_error <= SHAPE_TREND_FADE_LOW:
-        return 0.0
-    if shape_error >= SHAPE_TREND_FADE_HIGH:
-        return 1.0
-    return (shape_error - SHAPE_TREND_FADE_LOW) / (SHAPE_TREND_FADE_HIGH - SHAPE_TREND_FADE_LOW)
-
-
 def primitive_to_one_hot(primitive_name):
     one_hot = np.zeros((len(PRIMITIVE_NAMES),), dtype=np.float64)
     one_hot[PRIMITIVE_TO_ID[primitive_name]] = 1.0
     return one_hot
+
+
+def wrap_to_pi(angle):
+    return (angle + np.pi) % (2.0 * np.pi) - np.pi
 
 
 def is_checkpoint_path(path_obj):
@@ -188,7 +174,6 @@ class swimmer_gym(MultiAgentEnv):
 
         self.action_space = spaces.Discrete(len(PRIMITIVE_NAMES))
         self.observation_space = spaces.Box(low=-10000, high=10000, shape=(OBSERVATION_DIM,), dtype=np.float64)
-        self.viewer = None
 
         self.low_level_policies = {}
         self.low_level_states = [{}, {}]
@@ -202,17 +187,14 @@ class swimmer_gym(MultiAgentEnv):
         self.reward = 0.0
         self.done = False
 
-        self.last_forward_reward = 0.0
-        self.last_shape_trend_reward = 0.0
-        self.last_shape_anchor_penalty = 0.0
-        self.last_err_x = 0.0
-        self.last_err_y = 0.0
-        self.last_shape_error = 0.0
-        self.last_prev_shape_error = 0.0
-        self.last_trend_weight = 1.0
-        self.last_anchor_weight = 1.0
-        self.last_delta_x = 0.0
-        self.last_delta_y = 0.0
+        self.last_robot_rewards = [0.0, 0.0]
+        self.last_robot_progress_rewards = [0.0, 0.0]
+        self.last_robot_angle_penalties = [0.0, 0.0]
+        self.last_robot_angle_errors = [0.0, 0.0]
+        self.last_robot_goal_distances = [0.0, 0.0]
+        self.last_robot_headings = [0.0, 0.0]
+        self.last_robot_reached = [False, False]
+        self.robot_goal_reached = [False, False]
         self.last_macro_action = (0, 0)
         self.last_macro_action_names = ("forward", "forward")
         self.last_centroid1 = np.zeros((2,), dtype=np.float64)
@@ -263,17 +245,20 @@ class swimmer_gym(MultiAgentEnv):
         self.trace1.append(np.array(centroid1))
         self.trace2.append(np.array(centroid2))
 
-        self.last_forward_reward = 0.0
-        self.last_delta_x = centroid1[0] - centroid2[0]
-        self.last_delta_y = centroid1[1] - centroid2[1]
-        self.last_err_x = abs(self.last_delta_x - FORMATION_TARGET_DX)
-        self.last_err_y = abs(self.last_delta_y - FORMATION_TARGET_DY)
-        self.last_shape_error = SHAPE_ERROR_X_WEIGHT * self.last_err_x + SHAPE_ERROR_Y_WEIGHT * self.last_err_y
-        self.last_prev_shape_error = self.last_shape_error
-        self.last_trend_weight = compute_trend_weight(self.last_shape_error)
-        self.last_anchor_weight = 0.5 + (SHAPE_ANCHOR_NEAR_MULTIPLIER - 0.5) * (1.0 - self.last_trend_weight)
-        self.last_shape_trend_reward = 0.0
-        self.last_shape_anchor_penalty = 0.0
+        self.robot_goal_reached = [False, False]
+        self.last_robot_rewards = [0.0, 0.0]
+        self.last_robot_progress_rewards = [0.0, 0.0]
+        self.last_robot_angle_penalties = [0.0, 0.0]
+        self.last_robot_headings = [
+            compute_average_heading(self.state1),
+            compute_average_heading(self.state2),
+        ]
+        self.last_robot_goal_distances = [
+            float(np.linalg.norm(GOAL_POINT - centroid1)),
+            float(np.linalg.norm(GOAL_POINT - centroid2)),
+        ]
+        self.last_robot_angle_errors = [0.0, 0.0]
+        self.last_robot_reached = [False, False]
         self.last_macro_action = (0, 0)
         self.last_macro_action_names = ("forward", "forward")
         self.last_substep_frames = [self._capture_substep_frame(0)]
@@ -306,19 +291,15 @@ class swimmer_gym(MultiAgentEnv):
 
     def _get_single_obs(self, robot_idx):
         self_centroid = compute_true_centroid(self.XY_positions1 if robot_idx == 0 else self.XY_positions2)
-        other_centroid = compute_true_centroid(self.XY_positions2 if robot_idx == 0 else self.XY_positions1)
-        self_state = self.state1 if robot_idx == 0 else self.state2
-        other_state = self.state2 if robot_idx == 0 else self.state1
-        self_primitive = self.current_primitives[robot_idx]
-        other_primitive = self.current_primitives[1 - robot_idx]
-        relative = other_centroid - self_centroid
+        heading = self.last_robot_headings[robot_idx]
+        prev_primitive = self.current_primitives[robot_idx]
+        goal_relative = GOAL_POINT - self_centroid
 
         obs = np.concatenate(
             (
-                np.array([self_centroid[0], self_centroid[1], compute_average_heading(self_state)], dtype=np.float64),
-                primitive_to_one_hot(self_primitive),
-                np.array([relative[0], relative[1], compute_average_heading(other_state)], dtype=np.float64),
-                primitive_to_one_hot(other_primitive),
+                np.array([self_centroid[0], self_centroid[1], heading], dtype=np.float64),
+                primitive_to_one_hot(prev_primitive),
+                np.array([goal_relative[0], goal_relative[1]], dtype=np.float64),
             ),
             axis=0,
         )
@@ -414,7 +395,39 @@ class swimmer_gym(MultiAgentEnv):
             decoded.append((action_id, PRIMITIVE_ID_TO_NAME[action_id]))
         return decoded
 
-    def _record_macro_step(self, reward):
+    def _compute_navigation_reward(self, robot_idx, centroid_start, centroid_end, heading):
+        goal_vec = GOAL_POINT - centroid_end
+        goal_dist = float(np.linalg.norm(goal_vec))
+        already_reached = self.robot_goal_reached[robot_idx]
+        reached_now = goal_dist <= GOAL_RADIUS
+
+        progress_reward = 0.0
+        angle_penalty = 0.0
+        angle_error = 0.0
+        reach_bonus = 0.0
+
+        if not reached_now:
+            goal_unit = goal_vec / max(goal_dist, 1e-12)
+            target_angle = math.atan2(goal_vec[1], goal_vec[0])
+            angle_error = float(wrap_to_pi(heading - target_angle))
+            progress_reward = NAV_PROGRESS_REWARD_COEF * float(np.dot(centroid_end - centroid_start, goal_unit))
+            angle_penalty = -NAV_ANGLE_PENALTY_COEF * ((angle_error / math.pi) ** 2)
+        elif not already_reached:
+            reach_bonus = NAV_REACH_BONUS
+
+        reward = progress_reward + angle_penalty + reach_bonus
+        self.robot_goal_reached[robot_idx] = already_reached or reached_now
+        return {
+            "reward": float(reward),
+            "progress_reward": float(progress_reward),
+            "angle_penalty": float(angle_penalty),
+            "angle_error": float(angle_error),
+            "goal_distance": float(goal_dist),
+            "heading": float(heading),
+            "reached": bool(self.robot_goal_reached[robot_idx]),
+        }
+
+    def _record_macro_step(self, robot_rewards):
         global traj
         global traj2
         global trajp
@@ -426,24 +439,25 @@ class swimmer_gym(MultiAgentEnv):
                 self.state1[1],
                 self.state2[0],
                 self.state2[1],
-                self.last_delta_x,
-                self.last_delta_y,
-                self.last_forward_reward,
-                reward,
+                self.last_robot_rewards[0],
+                self.last_robot_rewards[1],
                 float(self.last_macro_action[0]),
                 float(self.last_macro_action[1]),
+                self.last_robot_goal_distances[0],
+                self.last_robot_goal_distances[1],
             ],
             dtype=np.float64,
         )
         reward_row = np.array(
             [
-                self.last_forward_reward,
-                self.last_shape_trend_reward,
-                self.last_shape_anchor_penalty,
-                self.last_shape_error,
-                self.last_prev_shape_error,
-                self.last_trend_weight,
-                self.last_anchor_weight,
+                self.last_robot_progress_rewards[0],
+                self.last_robot_progress_rewards[1],
+                self.last_robot_angle_penalties[0],
+                self.last_robot_angle_penalties[1],
+                self.last_robot_angle_errors[0],
+                self.last_robot_angle_errors[1],
+                float(self.last_robot_reached[0]),
+                float(self.last_robot_reached[1]),
             ],
             dtype=np.float64,
         )
@@ -487,7 +501,6 @@ class swimmer_gym(MultiAgentEnv):
         centroid2_start = compute_true_centroid(self.XY_positions2)
         self.last_substep_frames = []
 
-        # 每个高层动作固定执行若干底层子步，两机器人在同一流体环境中联合推进。
         for substep_index in range(self.low_level_hold_steps):
             action1 = self._compute_low_level_action(0, self.current_primitives[0])
             action2 = self._compute_low_level_action(1, self.current_primitives[1])
@@ -497,65 +510,70 @@ class swimmer_gym(MultiAgentEnv):
 
         centroid1_end = compute_true_centroid(self.XY_positions1)
         centroid2_end = compute_true_centroid(self.XY_positions2)
+        heading1 = compute_average_heading(self.state1)
+        heading2 = compute_average_heading(self.state2)
+
         self.last_centroid1 = np.array(centroid1_end, dtype=np.float64)
         self.last_centroid2 = np.array(centroid2_end, dtype=np.float64)
         self.trace1.append(np.array(centroid1_end))
         self.trace2.append(np.array(centroid2_end))
 
-        self.last_delta_x = centroid1_end[0] - centroid2_end[0]
-        self.last_delta_y = centroid1_end[1] - centroid2_end[1]
-        self.last_forward_reward = FORWARD_REWARD_COEF * (
-            0.5 * ((centroid1_end[0] - centroid1_start[0]) + (centroid2_end[0] - centroid2_start[0]))
-        )
-        self.last_err_x = abs(self.last_delta_x - FORMATION_TARGET_DX)
-        self.last_err_y = abs(self.last_delta_y - FORMATION_TARGET_DY)
-        self.last_prev_shape_error = self.last_shape_error
-        self.last_shape_error = SHAPE_ERROR_X_WEIGHT * self.last_err_x + SHAPE_ERROR_Y_WEIGHT * self.last_err_y
-        self.last_trend_weight = compute_trend_weight(self.last_shape_error)
-        self.last_anchor_weight = 0.5 + (SHAPE_ANCHOR_NEAR_MULTIPLIER - 0.5) * (1.0 - self.last_trend_weight)
-        self.last_shape_trend_reward = (
-            self.last_trend_weight
-            * SHAPE_TREND_REWARD_COEF
-            * (self.last_prev_shape_error - self.last_shape_error)
-        )
-        self.last_shape_anchor_penalty = -self.last_anchor_weight * SHAPE_ANCHOR_PENALTY_COEF * self.last_shape_error
+        nav1 = self._compute_navigation_reward(0, centroid1_start, centroid1_end, heading1)
+        nav2 = self._compute_navigation_reward(1, centroid2_start, centroid2_end, heading2)
 
-        team_reward = self.last_forward_reward + self.last_shape_trend_reward + self.last_shape_anchor_penalty
-        self.reward += team_reward
+        self.last_robot_rewards = [nav1["reward"], nav2["reward"]]
+        self.last_robot_progress_rewards = [nav1["progress_reward"], nav2["progress_reward"]]
+        self.last_robot_angle_penalties = [nav1["angle_penalty"], nav2["angle_penalty"]]
+        self.last_robot_angle_errors = [nav1["angle_error"], nav2["angle_error"]]
+        self.last_robot_goal_distances = [nav1["goal_distance"], nav2["goal_distance"]]
+        self.last_robot_headings = [nav1["heading"], nav2["heading"]]
+        self.last_robot_reached = [nav1["reached"], nav2["reached"]]
 
         print(
             f"[Macro {self.ep_step:>3d}] pair={self.current_primitives[0]}-{self.current_primitives[1]} | "
-            f"Reward: {team_reward:>9.4f}, "
-            f"Forward: {self.last_forward_reward:>9.4f}, "
-            f"Trend: {self.last_shape_trend_reward:>9.4f}, "
-            f"Anchor: {self.last_shape_anchor_penalty:>9.4f}, "
-            f"ShapeErr: {self.last_shape_error:>9.4f}, "
-            f"PrevShapeErr: {self.last_prev_shape_error:>9.4f} | "
-            f"TrendW: {self.last_trend_weight:>6.3f}, "
-            f"AnchorW: {self.last_anchor_weight:>6.3f} | "
-            f"R1: ({centroid1_end[0]:>10.4f}, {centroid1_end[1]:>10.4f}), "
-            f"R2: ({centroid2_end[0]:>10.4f}, {centroid2_end[1]:>10.4f}) | "
-            f"dX: {self.last_delta_x:>10.4f}, dY: {self.last_delta_y:>10.4f}, "
-            f"ErrX: {self.last_err_x:>9.4f}, ErrY: {self.last_err_y:>9.4f}"
+            f"R1: reward={nav1['reward']:>8.4f}, prog={nav1['progress_reward']:>8.4f}, "
+            f"ang_pen={nav1['angle_penalty']:>8.4f}, ang_err={nav1['angle_error']:>7.4f}, "
+            f"dist={nav1['goal_distance']:>7.4f}, reached={int(nav1['reached'])} | "
+            f"R2: reward={nav2['reward']:>8.4f}, prog={nav2['progress_reward']:>8.4f}, "
+            f"ang_pen={nav2['angle_penalty']:>8.4f}, ang_err={nav2['angle_error']:>7.4f}, "
+            f"dist={nav2['goal_distance']:>7.4f}, reached={int(nav2['reached'])}"
         )
 
-        self._record_macro_step(team_reward)
+        self._record_macro_step(self.last_robot_rewards)
 
-        if self.ep_step >= self.macro_horizon:
+        if all(self.robot_goal_reached):
+            self.done = True
+        elif self.ep_step >= self.macro_horizon:
             self.done = True
 
         obs = self._get_obs()
-        rewards = {robot_id: float(team_reward) for robot_id in ROBOT_IDS}
+        rewards = {
+            ROBOT_IDS[0]: float(nav1["reward"]),
+            ROBOT_IDS[1]: float(nav2["reward"]),
+        }
         dones = {robot_id: self.done for robot_id in ROBOT_IDS}
         dones["__all__"] = self.done
         infos = {
-            robot_id: {
-                "team_reward": float(team_reward),
-                "primitive": self.current_primitives[idx],
-                "delta_x": float(self.last_delta_x),
-                "delta_y": float(self.last_delta_y),
-            }
-            for idx, robot_id in enumerate(ROBOT_IDS)
+            ROBOT_IDS[0]: {
+                "reward": float(nav1["reward"]),
+                "progress_reward": float(nav1["progress_reward"]),
+                "angle_penalty": float(nav1["angle_penalty"]),
+                "angle_error": float(nav1["angle_error"]),
+                "goal_distance": float(nav1["goal_distance"]),
+                "heading": float(nav1["heading"]),
+                "reached": bool(nav1["reached"]),
+                "primitive": self.current_primitives[0],
+            },
+            ROBOT_IDS[1]: {
+                "reward": float(nav2["reward"]),
+                "progress_reward": float(nav2["progress_reward"]),
+                "angle_penalty": float(nav2["angle_penalty"]),
+                "angle_error": float(nav2["angle_error"]),
+                "goal_distance": float(nav2["goal_distance"]),
+                "heading": float(nav2["heading"]),
+                "reached": bool(nav2["reached"]),
+                "primitive": self.current_primitives[1],
+            },
         }
         return obs, rewards, dones, infos
 
